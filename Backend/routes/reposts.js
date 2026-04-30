@@ -3,6 +3,8 @@ const { Queue, Worker } = require("bullmq");
 const axios   = require("axios");
 const fs      = require("fs");
 const path    = require("path");
+const os      = require("os");
+const { execFile } = require("child_process");
 const { google } = require("googleapis");
 const supabase = require("../lib/supabase");
 const { authenticateToken } = require("../middleware/auth");
@@ -124,45 +126,61 @@ async function downloadVideo(url, id) {
 }
 
 /**
- * Download from YouTube using yt-dlp (via youtube-dl-exec).
+ * Download from YouTube using our local yt-dlp binary.
  * Outputs MP4 (H264+AAC) directly — no separate transcode needed.
  */
-async function downloadWithYtDlp(url, id) {
+function downloadWithYtDlp(url, id) {
   const dest = path.join("/tmp", `redistribute_${id}_ytdlp.mp4`);
-  const youtubedl = require('youtube-dl-exec');
+  
+  // Point to the binary downloaded by our postinstall script
+  const isWin = os.platform() === 'win32';
+  const filename = isWin ? 'yt-dlp.exe' : 'yt-dlp';
+  const ytdlpBin = path.join(__dirname, '..', 'bin', filename);
 
-  console.log(`📥 [reposts] Downloading via yt-dlp: ${url}`);
+  return new Promise((resolve, reject) => {
+    if (!fs.existsSync(ytdlpBin)) {
+      return reject(new Error(`yt-dlp binary not found at ${ytdlpBin}. Did postinstall run?`));
+    }
 
-  try {
-    await youtubedl(url, {
-      format: 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-      mergeOutputFormat: 'mp4',
-      output: dest,
-      noPlaylist: true,
-      noCheckCertificates: true,
-      socketTimeout: 30,
-      retries: 3,
-      noWarnings: true,
+    const args = [
+      url,
+      '-f', 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+      '--merge-output-format', 'mp4',
+      '-o', dest,
+      '--no-playlist',
+      '--no-check-certificates',
+      '--socket-timeout', '30',
+      '--retries', '3',
+      '--no-warnings',
+    ];
+
+    console.log(`📥 [reposts] Downloading via yt-dlp: ${url}`);
+
+    execFile(ytdlpBin, args, {
+      timeout: 120000,  // 2 minute timeout
+      maxBuffer: 1024 * 1024 * 10,
+    }, (err, stdout, stderr) => {
+      if (err) {
+        if (fs.existsSync(dest)) fs.unlinkSync(dest);
+        console.error(`❌ [reposts] yt-dlp error:`, stderr?.slice(-500) || err.message);
+        return reject(new Error(`yt-dlp download failed: ${stderr?.slice(-300) || err.message}`));
+      }
+
+      if (!fs.existsSync(dest)) {
+        return reject(new Error('yt-dlp completed but output file not found'));
+      }
+
+      const size = fs.statSync(dest).size;
+      console.log(`✅ [reposts] yt-dlp download complete: ${size} bytes`);
+
+      if (size < 10000) {
+        if (fs.existsSync(dest)) fs.unlinkSync(dest);
+        return reject(new Error(`yt-dlp output too small: ${size} bytes — video may be unavailable`));
+      }
+
+      resolve(dest);
     });
-
-    if (!fs.existsSync(dest)) {
-      throw new Error('yt-dlp completed but output file not found');
-    }
-
-    const size = fs.statSync(dest).size;
-    console.log(`✅ [reposts] yt-dlp download complete: ${size} bytes`);
-
-    if (size < 10000) {
-      throw new Error(`yt-dlp output too small: ${size} bytes — video may be unavailable`);
-    }
-
-    return dest;
-  } catch (err) {
-    // Clean up partial file
-    if (fs.existsSync(dest)) fs.unlinkSync(dest);
-    console.error(`❌ [reposts] yt-dlp error:`, err.stderr?.slice?.(-500) || err.message);
-    throw new Error(`yt-dlp download failed: ${err.stderr?.slice?.(-300) || err.message}`);
-  }
+  });
 }
 
 /**
