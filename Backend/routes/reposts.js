@@ -1,5 +1,5 @@
 const router  = require("express").Router();
-const { Queue, Worker } = require("bullmq");
+const { Queue, Worker, UnrecoverableError } = require("bullmq");
 const axios   = require("axios");
 const fs      = require("fs");
 const path    = require("path");
@@ -84,13 +84,14 @@ const worker = new Worker("reposts", async job => {
   } catch (err) {
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
     console.error(`❌ [reposts] Job ${job.id} failed after ${duration}s:`, err.message);
-    await supabase.from("reposts").update({ status: "failed", error: err.message }).eq("id", repostId);
-
-    // Don't retry permanent errors
-    if (err.unrecoverable) {
+    
+    if (err instanceof UnrecoverableError) {
       console.error(`🚫 [reposts] PERMANENT failure — will not retry: ${err.message}`);
-      throw new Error(err.message);
+      await supabase.from("reposts").update({ status: "failed", error: err.message }).eq("id", repostId);
+      throw err;
     }
+
+    await supabase.from("reposts").update({ status: "failed", error: err.message }).eq("id", repostId);
     throw err;
   } finally {
     if (videoPath && fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
@@ -154,6 +155,14 @@ function downloadWithYtDlp(url, id) {
       '--no-warnings',
     ];
 
+    // If a cookies file is provided, use it to bypass anti-bot protections
+    if (process.env.YOUTUBE_COOKIES_FILE && fs.existsSync(process.env.YOUTUBE_COOKIES_FILE)) {
+      console.log(`🍪 [reposts] Using yt-dlp cookies from: ${process.env.YOUTUBE_COOKIES_FILE}`);
+      args.push('--cookies', process.env.YOUTUBE_COOKIES_FILE);
+    } else {
+      console.log(`⚠️ [reposts] No YOUTUBE_COOKIES_FILE set. Downloads may fail with bot challenges.`);
+    }
+
     console.log(`📥 [reposts] Downloading via yt-dlp: ${url}`);
 
     execFile(ytdlpBin, args, {
@@ -162,8 +171,15 @@ function downloadWithYtDlp(url, id) {
     }, (err, stdout, stderr) => {
       if (err) {
         if (fs.existsSync(dest)) fs.unlinkSync(dest);
-        console.error(`❌ [reposts] yt-dlp error:`, stderr?.slice(-500) || err.message);
-        return reject(new Error(`yt-dlp download failed: ${stderr?.slice(-300) || err.message}`));
+        const stderrStr = stderr || err.message || '';
+        console.error(`❌ [reposts] yt-dlp error:`, stderrStr.slice(-500));
+        
+        // Detect bot challenge — unrecoverable without cookies
+        if (stderrStr.includes('Sign in to confirm you’re not a bot')) {
+          return reject(new UnrecoverableError(`YouTube blocked download (Anti-bot challenge). You must provide a valid cookies.txt file.`));
+        }
+        
+        return reject(new Error(`yt-dlp download failed: ${stderrStr.slice(-300)}`));
       }
 
       if (!fs.existsSync(dest)) {
@@ -175,7 +191,7 @@ function downloadWithYtDlp(url, id) {
 
       if (size < 10000) {
         if (fs.existsSync(dest)) fs.unlinkSync(dest);
-        return reject(new Error(`yt-dlp output too small: ${size} bytes — video may be unavailable`));
+        return reject(new UnrecoverableError(`yt-dlp output too small: ${size} bytes — video may be unavailable or blocked`));
       }
 
       resolve(dest);
@@ -197,9 +213,7 @@ async function downloadDirect(url, id) {
   if (contentType.includes('text/html')) {
     writer.close();
     if (fs.existsSync(dest)) fs.unlinkSync(dest);
-    const permErr = new Error(`Download returned HTML page (content-type: ${contentType}), not a video file. URL may be a webpage, not a direct video link.`);
-    permErr.unrecoverable = true;
-    throw permErr;
+    throw new UnrecoverableError(`Download returned HTML page (content-type: ${contentType}), not a video file. URL may be a webpage, not a direct video link.`);
   }
 
   response.data.pipe(writer);
@@ -228,16 +242,12 @@ async function ensureTikTokMP4(videoPath, id) {
   // Check for HTML error page (YouTube HTML pages are ~1MB!)
   if (header.startsWith('3c21444f') || header.startsWith('3c68746d') || header.startsWith('3c48544d')) {
     // 3c21444f = "<!DO", 3c68746d = "<htm", 3c48544d = "<HTM"
-    const permErr = new Error('Downloaded file is an HTML page, not a video. Source URL likely requires yt-dlp for extraction.');
-    permErr.unrecoverable = true;
-    throw permErr;
+    throw new UnrecoverableError('Downloaded file is an HTML page, not a video. Source URL likely requires yt-dlp for extraction.');
   }
 
   // Check for zero-length or tiny files
   if (fileSize < 10000) {
-    const permErr = new Error(`File too small to be a valid video: ${fileSize} bytes`);
-    permErr.unrecoverable = true;
-    throw permErr;
+    throw new UnrecoverableError(`File too small to be a valid video: ${fileSize} bytes`);
   }
 
   // If valid MP4, return as-is
@@ -268,15 +278,14 @@ async function ensureTikTokMP4(videoPath, id) {
     console.log(`✅ [reposts] Transcode output: ${outSize} bytes, ftyp=${outFtyp}`);
 
     if (!outFtyp || outSize < 1000) {
-      throw new Error('Transcoded file is still invalid');
+      throw new UnrecoverableError('Transcoded file is still invalid');
     }
 
     return mp4Path;
   } catch (err) {
     if (fs.existsSync(mp4Path)) fs.unlinkSync(mp4Path);
-    const permErr = new Error(`FFmpeg transcode failed: ${err.message}`);
-    permErr.unrecoverable = true;
-    throw permErr;
+    if (err instanceof UnrecoverableError) throw err;
+    throw new UnrecoverableError(`FFmpeg transcode failed: ${err.message}`);
   }
 }
 
