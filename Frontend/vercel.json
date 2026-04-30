@@ -5,6 +5,7 @@
   "installCommand": "npm install",
   "framework": "create-react-app",
   "rewrites": [
+    { "source": "/tiktok-developers-site-verification.txt", "destination": "/tiktok-developers-site-verification.txt" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
