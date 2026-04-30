@@ -104,12 +104,86 @@ worker.on("failed", (job, err) => {
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Detect if a URL is a YouTube watch/shorts/embed URL.
+ */
+function isYouTubeUrl(url) {
+  return /(?:youtube\.com\/(?:watch|shorts|embed)|youtu\.be\/)/.test(url || '');
+}
+
+/**
+ * Download video using yt-dlp for YouTube, or Axios for direct URLs.
+ * Always outputs a real video file (MP4 preferred).
+ */
 async function downloadVideo(url, id) {
+  if (isYouTubeUrl(url)) {
+    return downloadWithYtDlp(url, id);
+  }
+  return downloadDirect(url, id);
+}
+
+/**
+ * Download from YouTube using yt-dlp (via youtube-dl-exec).
+ * Outputs MP4 (H264+AAC) directly — no separate transcode needed.
+ */
+async function downloadWithYtDlp(url, id) {
+  const dest = path.join("/tmp", `redistribute_${id}_ytdlp.mp4`);
+  const youtubedl = require('youtube-dl-exec');
+
+  console.log(`📥 [reposts] Downloading via yt-dlp: ${url}`);
+
+  try {
+    await youtubedl(url, {
+      format: 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+      mergeOutputFormat: 'mp4',
+      output: dest,
+      noPlaylist: true,
+      noCheckCertificates: true,
+      socketTimeout: 30,
+      retries: 3,
+      noWarnings: true,
+    });
+
+    if (!fs.existsSync(dest)) {
+      throw new Error('yt-dlp completed but output file not found');
+    }
+
+    const size = fs.statSync(dest).size;
+    console.log(`✅ [reposts] yt-dlp download complete: ${size} bytes`);
+
+    if (size < 10000) {
+      throw new Error(`yt-dlp output too small: ${size} bytes — video may be unavailable`);
+    }
+
+    return dest;
+  } catch (err) {
+    // Clean up partial file
+    if (fs.existsSync(dest)) fs.unlinkSync(dest);
+    console.error(`❌ [reposts] yt-dlp error:`, err.stderr?.slice?.(-500) || err.message);
+    throw new Error(`yt-dlp download failed: ${err.stderr?.slice?.(-300) || err.message}`);
+  }
+}
+
+/**
+ * Direct HTTP download for non-YouTube URLs (Supabase storage, S3, etc.).
+ */
+async function downloadDirect(url, id) {
   const dest = path.join("/tmp", `redistribute_${id}_raw`);
   const writer = fs.createWriteStream(dest);
   const response = await axios({ url, method: "GET", responseType: "stream" });
   const contentType = response.headers['content-type'] || 'unknown';
-  console.log(`📥 [reposts] Download content-type: ${contentType}`);
+  console.log(`📥 [reposts] Direct download content-type: ${contentType}`);
+
+  // Reject HTML responses immediately (don't even save the file)
+  if (contentType.includes('text/html')) {
+    writer.close();
+    if (fs.existsSync(dest)) fs.unlinkSync(dest);
+    const permErr = new Error(`Download returned HTML page (content-type: ${contentType}), not a video file. URL may be a webpage, not a direct video link.`);
+    permErr.unrecoverable = true;
+    throw permErr;
+  }
+
   response.data.pipe(writer);
   return new Promise((resolve, reject) => {
     writer.on("finish", () => resolve(dest));
@@ -122,25 +196,28 @@ async function downloadVideo(url, id) {
  * Returns the path to a guaranteed-valid MP4.
  */
 async function ensureTikTokMP4(videoPath, id) {
-  const buffer = fs.readFileSync(videoPath, { encoding: null });
-  const hasFtyp = buffer.length > 8 && buffer.slice(4, 8).toString('ascii') === 'ftyp';
-  const header = buffer.slice(0, 12).toString('hex');
+  // Read first 12 bytes for signature check (efficient, no full-file read)
+  const headerBuf = Buffer.alloc(12);
+  const fd = fs.openSync(videoPath, 'r');
+  fs.readSync(fd, headerBuf, 0, 12, 0);
+  fs.closeSync(fd);
+  const hasFtyp = headerBuf.slice(4, 8).toString('ascii') === 'ftyp';
+  const header = headerBuf.toString('hex');
+  const fileSize = fs.statSync(videoPath).size;
 
-  console.log(`🔍 [reposts] File validation: size=${buffer.length}, ftyp=${hasFtyp}, header=${header.slice(0, 24)}`);
+  console.log(`🔍 [reposts] File validation: size=${fileSize}, ftyp=${hasFtyp}, header=${header.slice(0, 24)}`);
 
-  // Check for HTML error page
-  if (buffer.length < 5000) {
-    const text = buffer.toString('utf8', 0, Math.min(500, buffer.length));
-    if (text.includes('<html') || text.includes('<!DOCTYPE') || text.includes('<HTML')) {
-      const permErr = new Error('Downloaded file is an HTML page, not a video');
-      permErr.unrecoverable = true;
-      throw permErr;
-    }
+  // Check for HTML error page (YouTube HTML pages are ~1MB!)
+  if (header.startsWith('3c21444f') || header.startsWith('3c68746d') || header.startsWith('3c48544d')) {
+    // 3c21444f = "<!DO", 3c68746d = "<htm", 3c48544d = "<HTM"
+    const permErr = new Error('Downloaded file is an HTML page, not a video. Source URL likely requires yt-dlp for extraction.');
+    permErr.unrecoverable = true;
+    throw permErr;
   }
 
   // Check for zero-length or tiny files
-  if (buffer.length < 10000) {
-    const permErr = new Error(`File too small to be a valid video: ${buffer.length} bytes`);
+  if (fileSize < 10000) {
+    const permErr = new Error(`File too small to be a valid video: ${fileSize} bytes`);
     permErr.unrecoverable = true;
     throw permErr;
   }
@@ -151,8 +228,13 @@ async function ensureTikTokMP4(videoPath, id) {
     return videoPath;
   }
 
-  // Not a valid MP4 — transcode with FFmpeg
-  console.log('🔧 [reposts] File is NOT a valid MP4 — transcoding to TikTok-safe format...');
+  // Check for WebM signature (1a45dfa3 = EBML header for WebM/MKV)
+  if (header.startsWith('1a45dfa3')) {
+    console.log('🔧 [reposts] File is WebM/MKV — transcoding to MP4...');
+  } else {
+    console.log(`🔧 [reposts] Unknown format (header: ${header.slice(0, 16)}) — attempting transcode...`);
+  }
+
   const mp4Path = path.join("/tmp", `redistribute_${id}_tiktok.mp4`);
 
   try {
@@ -160,9 +242,9 @@ async function ensureTikTokMP4(videoPath, id) {
 
     // Verify the output
     const outBuf = Buffer.alloc(8);
-    const fd = fs.openSync(mp4Path, 'r');
-    fs.readSync(fd, outBuf, 0, 8, 0);
-    fs.closeSync(fd);
+    const outFd = fs.openSync(mp4Path, 'r');
+    fs.readSync(outFd, outBuf, 0, 8, 0);
+    fs.closeSync(outFd);
     const outFtyp = outBuf.slice(4, 8).toString('ascii') === 'ftyp';
     const outSize = fs.statSync(mp4Path).size;
     console.log(`✅ [reposts] Transcode output: ${outSize} bytes, ftyp=${outFtyp}`);
