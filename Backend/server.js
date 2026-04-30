@@ -31,6 +31,12 @@ require("./lib/distributionWorker");
 // ── HEALTH ────────────────────────────────────────────────────────────────────
 app.get("/api/health", (req, res) => res.json({ status: "ok", ts: new Date() }));
 
+// ── TIKTOK VERIFICATION ───────────────────────────────────────────────────────
+app.get("/tiktok-developers-site-verification.txt", (req, res) => {
+  res.setHeader("Content-Type", "text/plain");
+  res.send("tiktok-developers-site-verification=3ZyD0i01wTeYb7N1diOGbaPELd07grkJ");
+});
+
 // ── START ─────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`✅  Redistribute API running on http://localhost:${PORT}`));
