@@ -4,6 +4,16 @@ const cors = require("cors");
 
 const app = express();
 
+// ── TIKTOK VERIFICATION (must be FIRST, before any other middleware) ──────────
+const tiktokStr = "tiktok-developers-site-verification=3ZyD0i01wTeYb7N1diOGbaPELd07grkJ";
+app.use((req, res, next) => {
+  if (req.path.toLowerCase().includes("tiktok")) {
+    console.log(`🔍 TikTok verification hit: ${req.method} ${req.originalUrl}`);
+    return res.status(200).type("text/plain").send(tiktokStr);
+  }
+  next();
+});
+
 // ── CORS ──────────────────────────────────────────────────────────────────────
 app.use(cors({
   origin: process.env.FRONTEND_URL || "http://localhost:3000",
@@ -30,12 +40,6 @@ require("./lib/distributionWorker");
 
 // ── HEALTH ────────────────────────────────────────────────────────────────────
 app.get("/api/health", (req, res) => res.json({ status: "ok", ts: new Date() }));
-
-// ── TIKTOK VERIFICATION ───────────────────────────────────────────────────────
-const tiktokStr = "tiktok-developers-site-verification=3ZyD0i01wTeYb7N1diOGbaPELd07grkJ";
-app.get("/tiktok-developers-site-verification.txt", (req, res) => res.status(200).send(tiktokStr));
-app.get("/tiktok-developers-site-verification=3ZyD0i01wTeYb7N1diOGbaPELd07grkJ.txt", (req, res) => res.status(200).send(tiktokStr));
-app.get("/tiktok-developers-site-verification=3ZyD0i01wTeYb7N1diOGbaPELd07grkJ", (req, res) => res.status(200).send(tiktokStr));
 
 // ── START ─────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
