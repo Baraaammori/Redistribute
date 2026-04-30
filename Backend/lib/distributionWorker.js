@@ -101,12 +101,12 @@ async function uploadToTikTok(videoPath, title, account) {
 
 // ── Instagram upload helper ───────────────────────────────────────────────────
 async function uploadToInstagram(videoUrl, title, account) {
-  // Instagram requires a publicly accessible video URL
-  // Since we use Supabase Storage with public buckets, the URL is already public
+  // `account.handle` stores the `ig-user-id` we fetched during OAuth
+  const igUserId = account.handle;
 
   // Step 1: Create media container
   const { data: container } = await axios.post(
-    `https://graph.instagram.com/v18.0/me/media`,
+    `https://graph.facebook.com/v19.0/${igUserId}/media`,
     null,
     {
       params: {
@@ -126,7 +126,7 @@ async function uploadToInstagram(videoUrl, title, account) {
   while (status === "IN_PROGRESS" && attempts < 30) {
     await new Promise(r => setTimeout(r, 5000)); // wait 5 sec
     const { data: statusCheck } = await axios.get(
-      `https://graph.instagram.com/v18.0/${container.id}`,
+      `https://graph.facebook.com/v19.0/${container.id}`,
       { params: { fields: "status_code", access_token: account.access_token } }
     );
     status = statusCheck.status_code;
@@ -137,7 +137,7 @@ async function uploadToInstagram(videoUrl, title, account) {
 
   // Step 3: Publish
   const { data: published } = await axios.post(
-    `https://graph.instagram.com/v18.0/me/media_publish`,
+    `https://graph.facebook.com/v19.0/${igUserId}/media_publish`,
     null,
     {
       params: {

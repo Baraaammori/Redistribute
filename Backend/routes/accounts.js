@@ -156,11 +156,38 @@ router.get("/instagram/callback", async (req, res) => {
       }
     );
 
+    // 2. Fetch Facebook Pages to find the connected Instagram Account
+    const { data: pages } = await axios.get("https://graph.facebook.com/v19.0/me/accounts", {
+      params: { access_token: tokenData.access_token }
+    });
+
+    let igUserId = null;
+    let pageName = "Instagram Account";
+    
+    for (const page of (pages.data || [])) {
+      try {
+        const { data: pageDetails } = await axios.get(`https://graph.facebook.com/v19.0/${page.id}`, {
+          params: { fields: "instagram_business_account", access_token: tokenData.access_token }
+        });
+        if (pageDetails.instagram_business_account) {
+          igUserId = pageDetails.instagram_business_account.id;
+          pageName = page.name;
+          break;
+        }
+      } catch(e) { console.error("Error checking page:", e.message); }
+    }
+
+    if (!igUserId) {
+      console.error("No linked Instagram Professional account found on Facebook Pages.");
+      return res.redirect(`${process.env.FRONTEND_URL}/dashboard/accounts?error=no_ig_linked`);
+    }
+
+    // 3. Save the IG User ID in the "handle" field
     await supabase.from("platform_accounts").upsert({
       user_id: userId,
       platform: "instagram",
-      handle: "Instagram Account",
-      display_name: "Instagram Account",
+      handle: igUserId, // Crucial for worker
+      display_name: `Linked via ${pageName}`,
       follower_count: 0,
       access_token: tokenData.access_token,
       expires_at: new Date(Date.now() + (tokenData.expires_in || 5184000) * 1000),
