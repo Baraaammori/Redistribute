@@ -16,7 +16,9 @@ const youtubeDownloader = require("../lib/youtube-downloader");
 const repostQueue = new Queue("reposts", { connection });
 
 // ── Worker (processes jobs) ───────────────────────────────────────────────────
-const worker = new Worker("reposts", async job => {
+let worker = null;
+if (process.env.DISABLE_WORKERS !== 'true') {
+  worker = new Worker("reposts", async job => {
   const startTime = Date.now();
   const { repostId } = job.data;
   console.log(`\n🔄 [reposts] Job ${job.id} starting | repostId=${repostId} | attempt=${job.attemptsMade + 1}/${job.opts?.attempts || 3}`);
@@ -98,14 +100,17 @@ const worker = new Worker("reposts", async job => {
     if (videoPath && fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
     if (transcodedPath && fs.existsSync(transcodedPath)) fs.unlinkSync(transcodedPath);
   }
-}, { connection, concurrency: 2 });
+  }, { connection, concurrency: 2 });
 
-worker.on("completed", (job) => {
-  console.log(`✅ [reposts] Job ${job.id} completed successfully`);
-});
-worker.on("failed", (job, err) => {
-  console.error(`❌ [reposts] Job ${job.id} failed (attempt ${job.attemptsMade}):`, err.message);
-});
+  worker.on("completed", (job) => {
+    console.log(`✅ [reposts] Job ${job.id} completed successfully`);
+  });
+  worker.on("failed", (job, err) => {
+    console.error(`❌ [reposts] Job ${job.id} failed (attempt ${job.attemptsMade}):`, err.message);
+  });
+} else {
+  console.log(`⚠️ [reposts] Worker disabled on this instance (DISABLE_WORKERS=true)`);
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

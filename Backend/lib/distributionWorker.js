@@ -260,8 +260,10 @@ async function uploadToInstagram(videoUrl, title, account) {
 }
 
 // ── Worker ────────────────────────────────────────────────────────────────────
-const distributionWorker = new Worker("video-processing", async (job) => {
-  const { distributionId, videoId, userId } = job.data;
+let distributionWorker = null;
+if (process.env.DISABLE_WORKERS !== 'true') {
+  distributionWorker = new Worker("video-processing", async (job) => {
+    const { distributionId, videoId, userId } = job.data;
 
   // Fetch distribution record
   const { data: dist } = await supabase
@@ -392,17 +394,20 @@ const distributionWorker = new Worker("video-processing", async (job) => {
   } finally {
     cleanupTemp(videoPath);
   }
-}, {
-  connection,
-  concurrency: 2,
-});
+  }, {
+    connection,
+    concurrency: 2,
+  });
 
-distributionWorker.on("completed", (job) => {
-  console.log(`✅ Distribution ${job.id} completed`);
-});
+  distributionWorker.on("completed", (job) => {
+    console.log(`✅ Distribution ${job.id} completed`);
+  });
 
-distributionWorker.on("failed", (job, err) => {
-  console.error(`❌ Distribution ${job.id} failed:`, err.message);
-});
+  distributionWorker.on("failed", (job, err) => {
+    console.error(`❌ Distribution ${job.id} failed:`, err.message);
+  });
+} else {
+  console.log(`⚠️ [dist] Worker disabled on this instance (DISABLE_WORKERS=true)`);
+}
 
 module.exports = distributionWorker;
