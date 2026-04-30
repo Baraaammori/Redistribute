@@ -41,6 +41,7 @@ class YouTubeDownloader {
       '-o', dest,
       '--no-playlist',
       '--no-check-certificates',
+      '--extractor-args', 'youtube:player_client=ios,android,web',
       '--socket-timeout', '30',
       '--retries', '3',
       '--no-warnings',
