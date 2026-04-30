@@ -130,52 +130,47 @@ router.get("/tiktok/callback", async (req, res) => {
 // GET /api/accounts/instagram/auth-url
 router.get("/instagram/auth-url", authenticateToken, (req, res) => {
   const params = new URLSearchParams({
-    client_id: process.env.INSTAGRAM_APP_ID,
+    client_id: process.env.INSTAGRAM_APP_ID, // This is your Meta App ID
     redirect_uri: process.env.INSTAGRAM_REDIRECT_URI,
-    scope: "instagram_basic,instagram_content_publish",
+    scope: "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement",
     response_type: "code",
     state: req.user.userId,
   });
-  res.json({ url: `https://api.instagram.com/oauth/authorize?${params}` });
+  res.json({ url: `https://www.facebook.com/v19.0/dialog/oauth?${params}` });
 });
 
 // GET /api/accounts/instagram/callback
 router.get("/instagram/callback", async (req, res) => {
   const { code, state: userId } = req.query;
-  // Short-lived token
-  const { data: shortToken } = await axios.post(
-    "https://api.instagram.com/oauth/access_token",
-    new URLSearchParams({
-      client_id: process.env.INSTAGRAM_APP_ID,
-      client_secret: process.env.INSTAGRAM_APP_SECRET,
-      grant_type: "authorization_code",
-      redirect_uri: process.env.INSTAGRAM_REDIRECT_URI,
-      code,
-    }),
-    { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
-  );
-  // Exchange for long-lived token
-  const { data: longToken } = await axios.get("https://graph.instagram.com/access_token", {
-    params: {
-      grant_type: "ig_exchange_token",
-      client_secret: process.env.INSTAGRAM_APP_SECRET,
-      access_token: shortToken.access_token,
-    },
-  });
-  const { data: profile } = await axios.get("https://graph.instagram.com/me", {
-    params: { fields: "username,followers_count", access_token: longToken.access_token },
-  });
-  await supabase.from("platform_accounts").upsert({
-    user_id: userId,
-    platform: "instagram",
-    handle: `@${profile.username}`,
-    display_name: profile.username,
-    follower_count: profile.followers_count,
-    access_token: longToken.access_token,
-    expires_at: new Date(Date.now() + longToken.expires_in * 1000),
-  }, { onConflict: "user_id,platform" });
+  try {
+    // 1. Exchange code for access token using Facebook Graph
+    const { data: tokenData } = await axios.get(
+      "https://graph.facebook.com/v19.0/oauth/access_token",
+      {
+        params: {
+          client_id: process.env.INSTAGRAM_APP_ID,
+          client_secret: process.env.INSTAGRAM_APP_SECRET,
+          redirect_uri: process.env.INSTAGRAM_REDIRECT_URI,
+          code,
+        }
+      }
+    );
 
-  res.redirect(`${process.env.FRONTEND_URL}/dashboard/accounts?connected=instagram`);
+    await supabase.from("platform_accounts").upsert({
+      user_id: userId,
+      platform: "instagram",
+      handle: "Instagram Account",
+      display_name: "Instagram Account",
+      follower_count: 0,
+      access_token: tokenData.access_token,
+      expires_at: new Date(Date.now() + (tokenData.expires_in || 5184000) * 1000),
+    }, { onConflict: "user_id,platform" });
+
+    res.redirect(`${process.env.FRONTEND_URL}/dashboard/accounts?connected=instagram`);
+  } catch (error) {
+    console.error("Instagram Auth Error:", error.response?.data || error.message);
+    res.redirect(`${process.env.FRONTEND_URL}/dashboard/accounts?error=instagram_auth_failed`);
+  }
 });
 
 module.exports = router;
