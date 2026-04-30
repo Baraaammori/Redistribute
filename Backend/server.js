@@ -32,7 +32,7 @@ require("./lib/distributionWorker");
 app.get("/api/health", (req, res) => res.json({ status: "ok", ts: new Date() }));
 
 // ── TIKTOK VERIFICATION ───────────────────────────────────────────────────────
-app.get("/tiktok-developers-site-verification.txt", (req, res) => {
+app.get("/tiktok-developers-site-verification=3ZyD0i01wTeYb7N1diOGbaPELd07grkJ.txt", (req, res) => {
   res.setHeader("Content-Type", "text/plain");
   res.send("tiktok-developers-site-verification=3ZyD0i01wTeYb7N1diOGbaPELd07grkJ");
 });
