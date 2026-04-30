@@ -32,10 +32,10 @@ require("./lib/distributionWorker");
 app.get("/api/health", (req, res) => res.json({ status: "ok", ts: new Date() }));
 
 // ── TIKTOK VERIFICATION ───────────────────────────────────────────────────────
-app.get("/tiktok-developers-site-verification=3ZyD0i01wTeYb7N1diOGbaPELd07grkJ.txt", (req, res) => {
-  res.setHeader("Content-Type", "text/plain");
-  res.send("tiktok-developers-site-verification=3ZyD0i01wTeYb7N1diOGbaPELd07grkJ");
-});
+const tiktokStr = "tiktok-developers-site-verification=3ZyD0i01wTeYb7N1diOGbaPELd07grkJ";
+app.get("/tiktok-developers-site-verification.txt", (req, res) => res.status(200).send(tiktokStr));
+app.get("/tiktok-developers-site-verification=3ZyD0i01wTeYb7N1diOGbaPELd07grkJ.txt", (req, res) => res.status(200).send(tiktokStr));
+app.get("/tiktok-developers-site-verification=3ZyD0i01wTeYb7N1diOGbaPELd07grkJ", (req, res) => res.status(200).send(tiktokStr));
 
 // ── START ─────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
