@@ -51,3 +51,10 @@ Desktop.ini
 .idea/
 
 ./node_modules/
+
+# YouTube session cookies (SECRET - never commit!)
+cookies.txt
+Backend/cookies.txt
+
+# yt-dlp binary (downloaded by postinstall)
+Backend/bin/
