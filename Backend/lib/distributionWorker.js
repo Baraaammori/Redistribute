@@ -135,20 +135,34 @@ async function uploadToTikTok(videoPath, title, account) {
   if (!uploadUrl) throw new Error("TikTok did not return an upload_url: " + JSON.stringify(init));
 
   const buffer = fs.readFileSync(videoPath);
-  console.log(`📤 Uploading ${buffer.length} bytes to TikTok...`);
+  const fileSize = buffer.length;
+
+  // Validate MP4 signature (first 4+ bytes should contain 'ftyp')
+  const header = buffer.slice(0, 12).toString('hex');
+  const hasFtyp = buffer.slice(4, 8).toString('ascii') === 'ftyp';
+  console.log(`📤 [dist] Uploading ${fileSize} bytes | MP4 ftyp: ${hasFtyp} | header: ${header.slice(0, 24)}`);
+  if (!hasFtyp) {
+    console.warn('⚠️ [dist] File does not appear to be a valid MP4 — ftyp box not found at offset 4');
+  }
 
   try {
     await axios.put(uploadUrl, buffer, {
       headers: {
-        "Content-Type": "video/mp4",
-        "Content-Range": `bytes 0-${buffer.length - 1}/${buffer.length}`,
+        'Content-Type': 'video/mp4',
+        'Content-Length': fileSize,
+        'Content-Range': `bytes 0-${fileSize - 1}/${fileSize}`,
       },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+      // Prevent Axios from transforming the raw binary buffer
+      transformRequest: [(data) => data],
     });
-    console.log("✅ TikTok upload complete!");
+    console.log('✅ [dist] TikTok upload complete!');
   } catch (err) {
     const errorDetails = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-    console.error("❌ TikTok file upload error:", errorDetails);
-    throw new Error("TikTok Upload Error: " + errorDetails);
+    const status = err.response?.status;
+    console.error(`❌ [dist] TikTok file upload error [${status}]:`, errorDetails);
+    throw new Error(`TikTok Upload Error [${status}]: ${errorDetails}`);
   }
 
   return {

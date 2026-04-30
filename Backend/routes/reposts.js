@@ -206,20 +206,33 @@ async function uploadToTikTok(videoPath, title, account) {
   if (!uploadUrl) throw new Error("TikTok no upload_url: " + JSON.stringify(init));
 
   const buffer = fs.readFileSync(videoPath);
-  console.log(`📤 [reposts] Uploading ${buffer.length} bytes to TikTok...`);
+  const fileSize = buffer.length;
+
+  // Validate MP4 signature
+  const hasFtyp = buffer.slice(4, 8).toString('ascii') === 'ftyp';
+  console.log(`📤 [reposts] Uploading ${fileSize} bytes | MP4 ftyp: ${hasFtyp}`);
+  if (!hasFtyp) {
+    console.warn('⚠️ [reposts] File may not be a valid MP4 — ftyp box not found');
+  }
 
   try {
     await axios.put(uploadUrl, buffer, {
       headers: {
-        "Content-Type": "video/mp4",
-        "Content-Range": `bytes 0-${buffer.length - 1}/${buffer.length}`,
+        'Content-Type': 'video/mp4',
+        'Content-Length': fileSize,
+        'Content-Range': `bytes 0-${fileSize - 1}/${fileSize}`,
       },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+      // Prevent Axios from transforming the raw binary buffer
+      transformRequest: [(data) => data],
     });
     console.log("✅ [reposts] TikTok upload complete!");
   } catch (err) {
     const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-    console.error("❌ [reposts] TikTok file upload error:", detail);
-    throw new Error("TikTok Upload Error: " + detail);
+    const status = err.response?.status;
+    console.error(`❌ [reposts] TikTok file upload error [${status}]:`, detail);
+    throw new Error(`TikTok Upload Error [${status}]: ${detail}`);
   }
 }
 
