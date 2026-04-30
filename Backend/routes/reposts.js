@@ -7,6 +7,7 @@ const { google } = require("googleapis");
 const supabase = require("../lib/supabase");
 const { authenticateToken } = require("../middleware/auth");
 const connection = require("../lib/redis");
+const { transcodeToMP4 } = require("../lib/ffmpeg");
 
 // ── Queue setup ───────────────────────────────────────────────────────────────
 const repostQueue = new Queue("reposts", { connection });
@@ -28,11 +29,23 @@ const worker = new Worker("reposts", async job => {
   await supabase.from("reposts").update({ status: "processing" }).eq("id", repostId);
 
   let videoPath;
+  let transcodedPath;
   try {
     // 1. Download source video
     console.log(`📥 [reposts] Downloading video: ${repost.source_video_url?.slice(0, 80)}...`);
     videoPath = await downloadVideo(repost.source_video_url, repost.id);
-    console.log(`📥 [reposts] Downloaded to ${videoPath} (${fs.statSync(videoPath).size} bytes)`);
+    const dlSize = fs.statSync(videoPath).size;
+    console.log(`📥 [reposts] Downloaded to ${videoPath} (${dlSize} bytes)`);
+
+    // 1b. Check if download is valid (not an HTML error page)
+    if (dlSize < 1000) {
+      const head = fs.readFileSync(videoPath, 'utf8').slice(0, 200);
+      if (head.includes('<html') || head.includes('<!DOCTYPE')) {
+        const permErr = new Error(`Downloaded file is an HTML page, not a video: ${head.slice(0, 100)}`);
+        permErr.unrecoverable = true;
+        throw permErr;
+      }
+    }
 
     // 2. Upload to each destination
     for (const dest of repost.destinations) {
@@ -54,7 +67,12 @@ const worker = new Worker("reposts", async job => {
       console.log(`🔑 [reposts] ${dest} token: ${tokenAge}`);
 
       if (dest === "youtube")   await uploadToYouTube(videoPath, repost.title, destAccount);
-      if (dest === "tiktok")    await uploadToTikTok(videoPath, repost.title, destAccount);
+      if (dest === "tiktok") {
+        // TikTok requires valid MP4 with H264 — transcode if needed
+        const uploadPath = await ensureTikTokMP4(videoPath, repost.id);
+        if (uploadPath !== videoPath) transcodedPath = uploadPath;
+        await uploadToTikTok(uploadPath, repost.title, destAccount);
+      }
       if (dest === "instagram") await uploadToInstagram(videoPath, repost.title, destAccount);
     }
 
@@ -69,11 +87,12 @@ const worker = new Worker("reposts", async job => {
     // Don't retry permanent errors
     if (err.unrecoverable) {
       console.error(`🚫 [reposts] PERMANENT failure — will not retry: ${err.message}`);
-      throw new Error(err.message); // BullMQ won't retry if attempts exhausted
+      throw new Error(err.message);
     }
     throw err;
   } finally {
     if (videoPath && fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
+    if (transcodedPath && fs.existsSync(transcodedPath)) fs.unlinkSync(transcodedPath);
   }
 }, { connection, concurrency: 2 });
 
@@ -86,14 +105,79 @@ worker.on("failed", (job, err) => {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 async function downloadVideo(url, id) {
-  const dest = path.join("/tmp", `redistribute_${id}.mp4`);
+  const dest = path.join("/tmp", `redistribute_${id}_raw`);
   const writer = fs.createWriteStream(dest);
   const response = await axios({ url, method: "GET", responseType: "stream" });
+  const contentType = response.headers['content-type'] || 'unknown';
+  console.log(`📥 [reposts] Download content-type: ${contentType}`);
   response.data.pipe(writer);
   return new Promise((resolve, reject) => {
     writer.on("finish", () => resolve(dest));
     writer.on("error", reject);
   });
+}
+
+/**
+ * Validate file is a proper MP4 for TikTok, transcode if not.
+ * Returns the path to a guaranteed-valid MP4.
+ */
+async function ensureTikTokMP4(videoPath, id) {
+  const buffer = fs.readFileSync(videoPath, { encoding: null });
+  const hasFtyp = buffer.length > 8 && buffer.slice(4, 8).toString('ascii') === 'ftyp';
+  const header = buffer.slice(0, 12).toString('hex');
+
+  console.log(`🔍 [reposts] File validation: size=${buffer.length}, ftyp=${hasFtyp}, header=${header.slice(0, 24)}`);
+
+  // Check for HTML error page
+  if (buffer.length < 5000) {
+    const text = buffer.toString('utf8', 0, Math.min(500, buffer.length));
+    if (text.includes('<html') || text.includes('<!DOCTYPE') || text.includes('<HTML')) {
+      const permErr = new Error('Downloaded file is an HTML page, not a video');
+      permErr.unrecoverable = true;
+      throw permErr;
+    }
+  }
+
+  // Check for zero-length or tiny files
+  if (buffer.length < 10000) {
+    const permErr = new Error(`File too small to be a valid video: ${buffer.length} bytes`);
+    permErr.unrecoverable = true;
+    throw permErr;
+  }
+
+  // If valid MP4, return as-is
+  if (hasFtyp) {
+    console.log('✅ [reposts] File is a valid MP4, no transcoding needed');
+    return videoPath;
+  }
+
+  // Not a valid MP4 — transcode with FFmpeg
+  console.log('🔧 [reposts] File is NOT a valid MP4 — transcoding to TikTok-safe format...');
+  const mp4Path = path.join("/tmp", `redistribute_${id}_tiktok.mp4`);
+
+  try {
+    await transcodeToMP4(videoPath, mp4Path);
+
+    // Verify the output
+    const outBuf = Buffer.alloc(8);
+    const fd = fs.openSync(mp4Path, 'r');
+    fs.readSync(fd, outBuf, 0, 8, 0);
+    fs.closeSync(fd);
+    const outFtyp = outBuf.slice(4, 8).toString('ascii') === 'ftyp';
+    const outSize = fs.statSync(mp4Path).size;
+    console.log(`✅ [reposts] Transcode output: ${outSize} bytes, ftyp=${outFtyp}`);
+
+    if (!outFtyp || outSize < 1000) {
+      throw new Error('Transcoded file is still invalid');
+    }
+
+    return mp4Path;
+  } catch (err) {
+    if (fs.existsSync(mp4Path)) fs.unlinkSync(mp4Path);
+    const permErr = new Error(`FFmpeg transcode failed: ${err.message}`);
+    permErr.unrecoverable = true;
+    throw permErr;
+  }
 }
 
 async function uploadToYouTube(videoPath, title, account) {

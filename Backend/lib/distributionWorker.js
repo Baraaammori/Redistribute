@@ -4,9 +4,11 @@
 const { Worker } = require("bullmq");
 const axios = require("axios");
 const fs = require("fs");
+const path = require("path");
 const { google } = require("googleapis");
 const supabase = require("../lib/supabase");
 const { downloadToTemp, cleanupTemp } = require("../lib/storage");
+const { transcodeToMP4 } = require("../lib/ffmpeg");
 const connection = require("../lib/redis");
 
 // ── YouTube upload helper ─────────────────────────────────────────────────────
@@ -171,6 +173,38 @@ async function uploadToTikTok(videoPath, title, account) {
   };
 }
 
+/**
+ * Validate file is a proper MP4 for TikTok, transcode if not.
+ */
+async function ensureTikTokMP4Dist(videoPath, id) {
+  const buf = Buffer.alloc(8);
+  const fd = fs.openSync(videoPath, 'r');
+  fs.readSync(fd, buf, 0, 8, 0);
+  fs.closeSync(fd);
+  const hasFtyp = buf.slice(4, 8).toString('ascii') === 'ftyp';
+  const fileSize = fs.statSync(videoPath).size;
+
+  console.log(`🔍 [dist] File validation: size=${fileSize}, ftyp=${hasFtyp}`);
+
+  if (hasFtyp) {
+    console.log('✅ [dist] File is a valid MP4');
+    return { path: videoPath, transcoded: false };
+  }
+
+  console.log('🔧 [dist] File is NOT MP4 — transcoding...');
+  const mp4Path = videoPath.replace(/\.[^.]+$/, '') + '_tiktok.mp4';
+  await transcodeToMP4(videoPath, mp4Path);
+
+  const outBuf = Buffer.alloc(8);
+  const outFd = fs.openSync(mp4Path, 'r');
+  fs.readSync(outFd, outBuf, 0, 8, 0);
+  fs.closeSync(outFd);
+  const outFtyp = outBuf.slice(4, 8).toString('ascii') === 'ftyp';
+  console.log(`✅ [dist] Transcode done: ${fs.statSync(mp4Path).size} bytes, ftyp=${outFtyp}`);
+
+  return { path: mp4Path, transcoded: true };
+}
+
 // ── Instagram upload helper ───────────────────────────────────────────────────
 async function uploadToInstagram(videoUrl, title, account) {
   // `account.handle` stores the `ig-user-id` we fetched during OAuth
@@ -283,7 +317,10 @@ const distributionWorker = new Worker("video-processing", async (job) => {
     } else if (dist.platform === "youtube_shorts") {
       result = await uploadToYouTube(videoPath, title, description, account, true);
     } else if (dist.platform === "tiktok") {
-      result = await uploadToTikTok(videoPath, title, account);
+      // Validate & transcode for TikTok if needed
+      const { path: tikTokPath, transcoded } = await ensureTikTokMP4Dist(videoPath, distributionId);
+      result = await uploadToTikTok(tikTokPath, title, account);
+      if (transcoded) cleanupTemp(tikTokPath);
     } else if (dist.platform === "instagram") {
       // Instagram uses URL directly, doesn't need local file
       result = await uploadToInstagram(fileUrl, title, account);

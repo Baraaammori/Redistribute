@@ -183,4 +183,43 @@ function simplifyRatio(width, height) {
   return `${w}:${h}`;
 }
 
-module.exports = { analyzeVideo, cutClip, generateClips, generateThumbnail, simplifyRatio };
+/**
+ * Transcode any video to TikTok-safe MP4: H264 + AAC + yuv420p + faststart
+ * Handles WebM, MKV, MOV, AVI, or any format FFmpeg can read.
+ * @param {string} inputPath - source video (any format)
+ * @param {string} outputPath - output MP4 path
+ * @returns {Promise<string>} outputPath on success
+ */
+function transcodeToMP4(inputPath, outputPath) {
+  return new Promise((resolve, reject) => {
+    const args = [
+      "-y",
+      "-i", inputPath,
+      "-c:v", "libx264",
+      "-preset", "medium",
+      "-crf", "23",
+      "-c:a", "aac",
+      "-b:a", "128k",
+      "-pix_fmt", "yuv420p",
+      "-movflags", "+faststart",
+      "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",  // ensure even dimensions
+      "-r", "30",
+      outputPath,
+    ];
+
+    console.log(`🔧 [ffmpeg] Transcoding to TikTok-safe MP4: ${path.basename(inputPath)} → ${path.basename(outputPath)}`);
+
+    execFile("ffmpeg", args, {
+      maxBuffer: 1024 * 1024 * 100,  // 100MB buffer for long videos
+      timeout: 300000,                // 5 minute timeout
+    }, (err, stdout, stderr) => {
+      if (err) return reject(new Error(`FFmpeg transcode failed: ${err.message}\n${stderr?.slice(-500)}`));
+      if (!fs.existsSync(outputPath)) return reject(new Error("Transcode output file was not created"));
+      const outSize = fs.statSync(outputPath).size;
+      console.log(`🔧 [ffmpeg] Transcode complete: ${outSize} bytes`);
+      resolve(outputPath);
+    });
+  });
+}
+
+module.exports = { analyzeVideo, cutClip, generateClips, generateThumbnail, simplifyRatio, transcodeToMP4 };
