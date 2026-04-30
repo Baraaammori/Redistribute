@@ -60,41 +60,62 @@ async function uploadToYouTube(videoPath, title, description, account, isShorts 
 async function uploadToTikTok(videoPath, title, account) {
   const stat = fs.statSync(videoPath);
 
-  const { data: init } = await axios.post(
-    "https://open.tiktokapis.com/v2/post/publish/video/init/",
-    {
-      post_info: {
-        title: (title || "Posted via Redistribute.io").slice(0, 150),
-        privacy_level: "PUBLIC_TO_EVERYONE",
-        disable_duet: false,
-        disable_stitch: false,
-        disable_comment: false,
+  console.log(`📤 TikTok upload: file size ${stat.size}, title: "${title}"`);
+
+  let init;
+  try {
+    const resp = await axios.post(
+      "https://open.tiktokapis.com/v2/post/publish/video/init/",
+      {
+        post_info: {
+          title: (title || "Posted via Redistribute").slice(0, 150),
+          privacy_level: "SELF_ONLY",
+          disable_duet: false,
+          disable_stitch: false,
+          disable_comment: false,
+        },
+        source_info: {
+          source: "FILE_UPLOAD",
+          video_size: stat.size,
+          chunk_size: stat.size,
+          total_chunk_count: 1,
+        },
       },
-      source_info: {
-        source: "FILE_UPLOAD",
-        video_size: stat.size,
-        chunk_size: stat.size,
-        total_chunk_count: 1,
-      },
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${account.access_token}`,
-        "Content-Type": "application/json",
-      },
-    }
-  );
+      {
+        headers: {
+          Authorization: `Bearer ${account.access_token}`,
+          "Content-Type": "application/json; charset=UTF-8",
+        },
+      }
+    );
+    init = resp.data;
+    console.log("✅ TikTok init response:", JSON.stringify(init));
+  } catch (err) {
+    console.error("❌ TikTok init error:", err.response?.data || err.message);
+    throw err;
+  }
+
+  const uploadUrl = init.data?.upload_url;
+  if (!uploadUrl) throw new Error("TikTok did not return an upload_url: " + JSON.stringify(init));
 
   const buffer = fs.readFileSync(videoPath);
-  await axios.put(init.data.upload_url, buffer, {
-    headers: {
-      "Content-Type": "video/mp4",
-      "Content-Range": `bytes 0-${buffer.length - 1}/${buffer.length}`,
-    },
-  });
+  console.log(`📤 Uploading ${buffer.length} bytes to TikTok...`);
+
+  try {
+    await axios.put(uploadUrl, buffer, {
+      headers: {
+        "Content-Type": "video/mp4",
+        "Content-Range": `bytes 0-${buffer.length - 1}/${buffer.length}`,
+      },
+    });
+    console.log("✅ TikTok upload complete!");
+  } catch (err) {
+    console.error("❌ TikTok file upload error:", err.response?.data || err.message);
+    throw err;
+  }
 
   return {
-    platform_video_id: init.data.publish_id || null,
+    platform_video_id: init.data?.publish_id || null,
     platform_url: null,
   };
 }
