@@ -7,7 +7,7 @@ const app = express();
 // ── TIKTOK VERIFICATION (must be FIRST, before any other middleware) ──────────
 const tiktokStr = "tiktok-developers-site-verification=bghKrrlfRtF6BKysbfBCv0nrPTK70xQW";
 app.use((req, res, next) => {
-  if (req.path.toLowerCase().includes("tiktok")) {
+  if (req.path.toLowerCase().includes("tiktok-developers-site-verification")) {
     console.log(`🔍 TikTok verification hit: ${req.method} ${req.originalUrl}`);
     return res.status(200).type("text/plain").send(tiktokStr);
   }
