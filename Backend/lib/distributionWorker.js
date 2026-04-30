@@ -91,8 +91,9 @@ async function uploadToTikTok(videoPath, title, account) {
     init = resp.data;
     console.log("✅ TikTok init response:", JSON.stringify(init));
   } catch (err) {
-    console.error("❌ TikTok init error:", err.response?.data || err.message);
-    throw err;
+    const errorDetails = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    console.error("❌ TikTok init error:", errorDetails);
+    throw new Error("TikTok API Error: " + errorDetails);
   }
 
   const uploadUrl = init.data?.upload_url;
@@ -110,8 +111,9 @@ async function uploadToTikTok(videoPath, title, account) {
     });
     console.log("✅ TikTok upload complete!");
   } catch (err) {
-    console.error("❌ TikTok file upload error:", err.response?.data || err.message);
-    throw err;
+    const errorDetails = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    console.error("❌ TikTok file upload error:", errorDetails);
+    throw new Error("TikTok Upload Error: " + errorDetails);
   }
 
   return {
