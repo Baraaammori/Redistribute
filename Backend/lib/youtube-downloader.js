@@ -36,8 +36,8 @@ class YouTubeDownloader {
   _buildArgs(url, dest, options = {}) {
     const args = [
       url,
-      '-f', 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-      '--merge-output-format', 'mp4',
+      '-f', 'bestvideo+bestaudio/best',
+      '--merge-output-format', 'mkv',
       '-o', dest,
       '--no-playlist',
       '--no-check-certificates',
@@ -98,7 +98,7 @@ class YouTubeDownloader {
    * Main download method with fallback strategies
    */
   async download(url, id, attempt = 1) {
-    const dest = path.join("/tmp", `redistribute_${id}_ytdlp.mp4`);
+    const dest = path.join("/tmp", `redistribute_${id}_ytdlp.mkv`);
 
     if (!fs.existsSync(this.binPath)) {
       throw new Error(`yt-dlp binary not found at ${this.binPath}. Run npm run build.`);
