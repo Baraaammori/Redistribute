@@ -49,8 +49,19 @@ class YouTubeDownloader {
     // 1. Cookie Authentication (Primary bypass)
     const cookieFile = process.env.YOUTUBE_COOKIES_FILE;
     if (cookieFile && fs.existsSync(cookieFile)) {
-      console.log(`🍪 [youtube-dl] Injecting cookies from ${cookieFile}`);
-      args.push('--cookies', cookieFile);
+      // yt-dlp needs write access to the cookies file, but /etc/secrets is read-only.
+      // Copy it to /tmp/ which is always writable.
+      const writableCookieFile = path.join(os.tmpdir(), 'youtube_cookies_writable.txt');
+      
+      try {
+        fs.copyFileSync(cookieFile, writableCookieFile);
+        console.log(`🍪 [youtube-dl] Copied cookies to writable path: ${writableCookieFile}`);
+        args.push('--cookies', writableCookieFile);
+      } catch (err) {
+        console.error(`⚠️ [youtube-dl] Failed to copy cookies to writable path: ${err.message}`);
+        // Fallback to original just in case
+        args.push('--cookies', cookieFile);
+      }
     } else if (options.useBrowserCookies) {
       // Fallback for local development
       args.push('--cookies-from-browser', 'chrome');
