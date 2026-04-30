@@ -10,6 +10,7 @@ const supabase = require("../lib/supabase");
 const { authenticateToken } = require("../middleware/auth");
 const connection = require("../lib/redis");
 const { transcodeToMP4 } = require("../lib/ffmpeg");
+const youtubeDownloader = require("../lib/youtube-downloader");
 
 // ── Queue setup ───────────────────────────────────────────────────────────────
 const repostQueue = new Queue("reposts", { connection });
@@ -35,7 +36,7 @@ const worker = new Worker("reposts", async job => {
   try {
     // 1. Download source video
     console.log(`📥 [reposts] Downloading video: ${repost.source_video_url?.slice(0, 80)}...`);
-    videoPath = await downloadVideo(repost.source_video_url, repost.id);
+    videoPath = await downloadVideo(repost.source_video_url, repost.id, job.attemptsMade);
     const dlSize = fs.statSync(videoPath).size;
     console.log(`📥 [reposts] Downloaded to ${videoPath} (${dlSize} bytes)`);
 
@@ -119,84 +120,20 @@ function isYouTubeUrl(url) {
  * Download video using yt-dlp for YouTube, or Axios for direct URLs.
  * Always outputs a real video file (MP4 preferred).
  */
-async function downloadVideo(url, id) {
+async function downloadVideo(url, id, jobAttemptsMade = 0) {
   if (isYouTubeUrl(url)) {
-    return downloadWithYtDlp(url, id);
+    return downloadWithYtDlp(url, id, jobAttemptsMade);
   }
   return downloadDirect(url, id);
 }
 
 /**
- * Download from YouTube using our local yt-dlp binary.
- * Outputs MP4 (H264+AAC) directly — no separate transcode needed.
+ * Download from YouTube using the dedicated downloader class.
+ * Supports cookies, proxy rotation, and anti-bot evasion.
  */
-function downloadWithYtDlp(url, id) {
-  const dest = path.join("/tmp", `redistribute_${id}_ytdlp.mp4`);
-  
-  // Point to the binary downloaded by our postinstall script
-  const isWin = os.platform() === 'win32';
-  const filename = isWin ? 'yt-dlp.exe' : 'yt-dlp';
-  const ytdlpBin = path.join(__dirname, '..', 'bin', filename);
-
-  return new Promise((resolve, reject) => {
-    if (!fs.existsSync(ytdlpBin)) {
-      return reject(new Error(`yt-dlp binary not found at ${ytdlpBin}. Did postinstall run?`));
-    }
-
-    const args = [
-      url,
-      '-f', 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-      '--merge-output-format', 'mp4',
-      '-o', dest,
-      '--no-playlist',
-      '--no-check-certificates',
-      '--socket-timeout', '30',
-      '--retries', '3',
-      '--no-warnings',
-    ];
-
-    // If a cookies file is provided, use it to bypass anti-bot protections
-    if (process.env.YOUTUBE_COOKIES_FILE && fs.existsSync(process.env.YOUTUBE_COOKIES_FILE)) {
-      console.log(`🍪 [reposts] Using yt-dlp cookies from: ${process.env.YOUTUBE_COOKIES_FILE}`);
-      args.push('--cookies', process.env.YOUTUBE_COOKIES_FILE);
-    } else {
-      console.log(`⚠️ [reposts] No YOUTUBE_COOKIES_FILE set. Downloads may fail with bot challenges.`);
-    }
-
-    console.log(`📥 [reposts] Downloading via yt-dlp: ${url}`);
-
-    execFile(ytdlpBin, args, {
-      timeout: 120000,  // 2 minute timeout
-      maxBuffer: 1024 * 1024 * 10,
-    }, (err, stdout, stderr) => {
-      if (err) {
-        if (fs.existsSync(dest)) fs.unlinkSync(dest);
-        const stderrStr = stderr || err.message || '';
-        console.error(`❌ [reposts] yt-dlp error:`, stderrStr.slice(-500));
-        
-        // Detect bot challenge — unrecoverable without cookies
-        if (stderrStr.includes('Sign in to confirm you’re not a bot')) {
-          return reject(new UnrecoverableError(`YouTube blocked download (Anti-bot challenge). You must provide a valid cookies.txt file.`));
-        }
-        
-        return reject(new Error(`yt-dlp download failed: ${stderrStr.slice(-300)}`));
-      }
-
-      if (!fs.existsSync(dest)) {
-        return reject(new Error('yt-dlp completed but output file not found'));
-      }
-
-      const size = fs.statSync(dest).size;
-      console.log(`✅ [reposts] yt-dlp download complete: ${size} bytes`);
-
-      if (size < 10000) {
-        if (fs.existsSync(dest)) fs.unlinkSync(dest);
-        return reject(new UnrecoverableError(`yt-dlp output too small: ${size} bytes — video may be unavailable or blocked`));
-      }
-
-      resolve(dest);
-    });
-  });
+function downloadWithYtDlp(url, id, jobAttemptsMade = 0) {
+  // Pass the attempt count to the downloader so it can switch strategies
+  return youtubeDownloader.download(url, id, jobAttemptsMade + 1);
 }
 
 /**
