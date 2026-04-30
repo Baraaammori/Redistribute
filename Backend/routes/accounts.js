@@ -130,9 +130,9 @@ router.get("/tiktok/callback", async (req, res) => {
 // GET /api/accounts/instagram/auth-url
 router.get("/instagram/auth-url", authenticateToken, (req, res) => {
   const params = new URLSearchParams({
-    client_id: process.env.INSTAGRAM_APP_ID, // This is your Meta App ID
+    client_id: process.env.INSTAGRAM_APP_ID,
     redirect_uri: process.env.INSTAGRAM_REDIRECT_URI,
-    scope: "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement",
+    scope: "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement,business_management",
     response_type: "code",
     state: req.user.userId,
   });
@@ -156,46 +156,79 @@ router.get("/instagram/callback", async (req, res) => {
       }
     );
 
-    // 2. Fetch Facebook Pages to find the connected Instagram Account
+    console.log("✅ Got Facebook access token");
+
+    // 2. Fetch Facebook Pages (use fields to get page access_token)
     const { data: pages } = await axios.get("https://graph.facebook.com/v19.0/me/accounts", {
-      params: { access_token: tokenData.access_token }
+      params: {
+        fields: "id,name,access_token,instagram_business_account",
+        access_token: tokenData.access_token,
+      }
     });
+
+    console.log(`📄 Found ${pages.data?.length || 0} Facebook Pages`);
 
     let igUserId = null;
     let pageName = "Instagram Account";
-    
+    let pageAccessToken = null;
+
     for (const page of (pages.data || [])) {
+      console.log(`  → Checking page: ${page.name} (${page.id})`);
+
+      // Check if instagram_business_account is already in the response
+      if (page.instagram_business_account) {
+        igUserId = page.instagram_business_account.id;
+        pageName = page.name;
+        pageAccessToken = page.access_token;
+        console.log(`  ✅ Found IG account ${igUserId} directly on page ${page.name}`);
+        break;
+      }
+
+      // If not, query the page using the PAGE access token (not user token)
       try {
-        const { data: pageDetails } = await axios.get(`https://graph.facebook.com/v19.0/${page.id}`, {
-          params: { fields: "instagram_business_account", access_token: tokenData.access_token }
-        });
+        const { data: pageDetails } = await axios.get(
+          `https://graph.facebook.com/v19.0/${page.id}`,
+          {
+            params: {
+              fields: "instagram_business_account",
+              access_token: page.access_token, // Use PAGE token, not user token
+            }
+          }
+        );
+        console.log(`  → Page details for ${page.name}:`, JSON.stringify(pageDetails));
         if (pageDetails.instagram_business_account) {
           igUserId = pageDetails.instagram_business_account.id;
           pageName = page.name;
+          pageAccessToken = page.access_token;
+          console.log(`  ✅ Found IG account ${igUserId} via page query`);
           break;
         }
-      } catch(e) { console.error("Error checking page:", e.message); }
+      } catch (e) {
+        console.error(`  ❌ Error checking page ${page.name}:`, e.response?.data || e.message);
+      }
     }
 
     if (!igUserId) {
-      console.error("No linked Instagram Professional account found on Facebook Pages.");
+      console.error("❌ No linked Instagram Professional account found on any Facebook Page.");
+      console.error("Pages data:", JSON.stringify(pages.data, null, 2));
       return res.redirect(`${process.env.FRONTEND_URL}/dashboard/accounts?error=no_ig_linked`);
     }
 
-    // 3. Save the IG User ID in the "handle" field
+    // 3. Save the IG User ID and the PAGE access token (not user token)
     await supabase.from("platform_accounts").upsert({
       user_id: userId,
       platform: "instagram",
-      handle: igUserId, // Crucial for worker
+      handle: igUserId,
       display_name: `Linked via ${pageName}`,
       follower_count: 0,
-      access_token: tokenData.access_token,
-      expires_at: new Date(Date.now() + (tokenData.expires_in || 5184000) * 1000),
+      access_token: pageAccessToken || tokenData.access_token,
+      expires_at: new Date(Date.now() + 5184000 * 1000), // ~60 days
     }, { onConflict: "user_id,platform" });
 
+    console.log(`✅ Instagram connected! IG User ID: ${igUserId}, Page: ${pageName}`);
     res.redirect(`${process.env.FRONTEND_URL}/dashboard/accounts?connected=instagram`);
   } catch (error) {
-    console.error("Instagram Auth Error:", error.response?.data || error.message);
+    console.error("❌ Instagram Auth Error:", error.response?.data || error.message);
     res.redirect(`${process.env.FRONTEND_URL}/dashboard/accounts?error=instagram_auth_failed`);
   }
 });
