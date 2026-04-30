@@ -13,7 +13,9 @@ const repostQueue = new Queue("reposts", { connection });
 
 // ── Worker (processes jobs) ───────────────────────────────────────────────────
 const worker = new Worker("reposts", async job => {
+  const startTime = Date.now();
   const { repostId } = job.data;
+  console.log(`\n🔄 [reposts] Job ${job.id} starting | repostId=${repostId} | attempt=${job.attemptsMade + 1}/${job.opts?.attempts || 3}`);
 
   const { data: repost } = await supabase
     .from("reposts")
@@ -28,10 +30,13 @@ const worker = new Worker("reposts", async job => {
   let videoPath;
   try {
     // 1. Download source video
+    console.log(`📥 [reposts] Downloading video: ${repost.source_video_url?.slice(0, 80)}...`);
     videoPath = await downloadVideo(repost.source_video_url, repost.id);
+    console.log(`📥 [reposts] Downloaded to ${videoPath} (${fs.statSync(videoPath).size} bytes)`);
 
     // 2. Upload to each destination
     for (const dest of repost.destinations) {
+      console.log(`🎯 [reposts] Processing destination: ${dest}`);
       const { data: destAccount } = await supabase
         .from("platform_accounts")
         .select("*")
@@ -40,25 +45,44 @@ const worker = new Worker("reposts", async job => {
         .single();
 
       if (!destAccount) {
-        console.warn(`No ${dest} account for user ${repost.user_id}, skipping`);
+        console.warn(`⚠️ [reposts] No ${dest} account for user ${repost.user_id}, skipping`);
         continue;
       }
+
+      // Log token state (without exposing the actual token)
+      const tokenAge = destAccount.expires_at ? `expires ${new Date(destAccount.expires_at).toISOString()}` : "no expiry set";
+      console.log(`🔑 [reposts] ${dest} token: ${tokenAge}`);
 
       if (dest === "youtube")   await uploadToYouTube(videoPath, repost.title, destAccount);
       if (dest === "tiktok")    await uploadToTikTok(videoPath, repost.title, destAccount);
       if (dest === "instagram") await uploadToInstagram(videoPath, repost.title, destAccount);
     }
 
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(`✅ [reposts] Job ${job.id} completed in ${duration}s`);
     await supabase.from("reposts").update({ status: "done" }).eq("id", repostId);
   } catch (err) {
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.error(`❌ [reposts] Job ${job.id} failed after ${duration}s:`, err.message);
     await supabase.from("reposts").update({ status: "failed", error: err.message }).eq("id", repostId);
+
+    // Don't retry permanent errors
+    if (err.unrecoverable) {
+      console.error(`🚫 [reposts] PERMANENT failure — will not retry: ${err.message}`);
+      throw new Error(err.message); // BullMQ won't retry if attempts exhausted
+    }
     throw err;
   } finally {
     if (videoPath && fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
   }
 }, { connection, concurrency: 2 });
 
-worker.on("failed", (job, err) => console.error(`Job ${job.id} failed:`, err.message));
+worker.on("completed", (job) => {
+  console.log(`✅ [reposts] Job ${job.id} completed successfully`);
+});
+worker.on("failed", (job, err) => {
+  console.error(`❌ [reposts] Job ${job.id} failed (attempt ${job.attemptsMade}):`, err.message);
+});
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 async function downloadVideo(url, id) {
@@ -89,23 +113,114 @@ async function uploadToYouTube(videoPath, title, account) {
   });
 }
 
+async function refreshTikTokToken(account) {
+  try {
+    const { data } = await axios.post(
+      "https://open.tiktokapis.com/v2/oauth/token/",
+      new URLSearchParams({
+        client_key: process.env.TIKTOK_CLIENT_KEY,
+        client_secret: process.env.TIKTOK_CLIENT_SECRET,
+        grant_type: "refresh_token",
+        refresh_token: account.refresh_token,
+      }),
+      { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+    );
+    if (data.access_token) {
+      await supabase.from("platform_accounts").update({
+        access_token: data.access_token,
+        refresh_token: data.refresh_token,
+        expires_at: new Date(Date.now() + data.expires_in * 1000),
+      }).eq("id", account.id);
+      account.access_token = data.access_token;
+      account.refresh_token = data.refresh_token;
+      console.log("🔑 [reposts] TikTok token refreshed");
+    }
+    return account;
+  } catch (err) {
+    console.error("🔑 [reposts] TikTok token refresh failed:", err.response?.data || err.message);
+    return account; // proceed with existing token
+  }
+}
+
 async function uploadToTikTok(videoPath, title, account) {
+  // Refresh token if expiring within 1 hour
+  if (account.expires_at && new Date(account.expires_at) < new Date(Date.now() + 3600000)) {
+    console.log("🔑 [reposts] Token expiring soon, refreshing...");
+    account = await refreshTikTokToken(account);
+  }
+
   const stat = fs.statSync(videoPath);
-  const { data: init } = await axios.post(
-    "https://open.tiktokapis.com/v2/post/publish/video/init/",
-    {
-      post_info: { title: title || "Posted via Redistribute.io", privacy_level: "PUBLIC_TO_EVERYONE", disable_duet: false, disable_stitch: false, disable_comment: false },
-      source_info: { source: "FILE_UPLOAD", video_size: stat.size, chunk_size: stat.size, total_chunk_count: 1 },
-    },
-    { headers: { Authorization: `Bearer ${account.access_token}`, "Content-Type": "application/json" } }
-  );
+  console.log(`📤 [reposts] TikTok upload: size=${stat.size}, title="${(title || "").slice(0, 50)}"`);
+
+  let init;
+  try {
+    const resp = await axios.post(
+      "https://open.tiktokapis.com/v2/post/publish/video/init/",
+      {
+        post_info: {
+          title: (title || "Posted via Redistribute").slice(0, 150),
+          privacy_level: "SELF_ONLY",
+          disable_duet: false,
+          disable_stitch: false,
+          disable_comment: false,
+        },
+        source_info: {
+          source: "FILE_UPLOAD",
+          video_size: stat.size,
+          chunk_size: stat.size,
+          total_chunk_count: 1,
+        },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${account.access_token}`,
+          "Content-Type": "application/json; charset=UTF-8",
+        },
+      }
+    );
+    init = resp.data;
+    console.log("✅ [reposts] TikTok init OK:", JSON.stringify(init));
+  } catch (err) {
+    const body = err.response?.data;
+    const detail = body ? JSON.stringify(body) : err.message;
+    const status = err.response?.status;
+    console.error(`❌ [reposts] TikTok init failed [${status}]:`, detail);
+
+    // Classify: permanent vs transient
+    const errCode = body?.error?.code || body?.error || "";
+    const permanent = [
+      "unaudited_client_can_only_post_to_private_accounts",
+      "scope_not_authorized",
+      "access_token_invalid",
+      "token_not_authorized_for_scope",
+    ];
+    if (status === 403 && permanent.some(p => String(errCode).includes(p))) {
+      const permErr = new Error(`TikTok PERMANENT 403: ${detail}`);
+      permErr.unrecoverable = true;
+      throw permErr;
+    }
+    throw new Error(`TikTok API [${status}]: ${detail}`);
+  }
+
+  const uploadUrl = init.data?.upload_url;
+  if (!uploadUrl) throw new Error("TikTok no upload_url: " + JSON.stringify(init));
+
   const buffer = fs.readFileSync(videoPath);
-  await axios.put(init.data.upload_url, buffer, {
-    headers: {
-      "Content-Type": "video/mp4",
-      "Content-Range": `bytes 0-${buffer.length - 1}/${buffer.length}`,
-    },
-  });
+  console.log(`📤 [reposts] Uploading ${buffer.length} bytes to TikTok...`);
+
+  try {
+    await axios.put(uploadUrl, buffer, {
+      headers: {
+        "Content-Type": "video/mp4",
+        "Content-Range": `bytes 0-${buffer.length - 1}/${buffer.length}`,
+      },
+    });
+    console.log("✅ [reposts] TikTok upload complete!");
+  } catch (err) {
+    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    console.error("❌ [reposts] TikTok file upload error:", detail);
+    throw new Error("TikTok Upload Error: " + detail);
+  }
 }
 
 async function uploadToInstagram(videoPath, title, account) {

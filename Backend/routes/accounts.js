@@ -90,37 +90,47 @@ router.get("/tiktok/auth-url", authenticateToken, (req, res) => {
 // GET /api/accounts/tiktok/callback
 router.get("/tiktok/callback", async (req, res) => {
   const { code, state: userId } = req.query;
-  const { data: tokenData } = await axios.post(
-    "https://open.tiktokapis.com/v2/oauth/token/",
-    new URLSearchParams({
-      client_key: process.env.TIKTOK_CLIENT_KEY,
-      client_secret: process.env.TIKTOK_CLIENT_SECRET,
-      code,
-      grant_type: "authorization_code",
-      redirect_uri: process.env.TIKTOK_REDIRECT_URI,
-    }),
-    { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
-  );
-  const { data: userInfo } = await axios.get(
-    "https://open.tiktokapis.com/v2/user/info/",
-    {
-      headers: { Authorization: `Bearer ${tokenData.access_token}` },
-      params: { fields: "open_id,display_name,follower_count" },
-    }
-  );
-  const u = userInfo.data.user;
-  await supabase.from("platform_accounts").upsert({
-    user_id: userId,
-    platform: "tiktok",
-    handle: u.display_name,
-    display_name: u.display_name,
-    follower_count: u.follower_count,
-    access_token: tokenData.access_token,
-    refresh_token: tokenData.refresh_token,
-    expires_at: new Date(Date.now() + tokenData.expires_in * 1000),
-  }, { onConflict: "user_id,platform" });
+  try {
+    const { data: tokenData } = await axios.post(
+      "https://open.tiktokapis.com/v2/oauth/token/",
+      new URLSearchParams({
+        client_key: process.env.TIKTOK_CLIENT_KEY,
+        client_secret: process.env.TIKTOK_CLIENT_SECRET,
+        code,
+        grant_type: "authorization_code",
+        redirect_uri: process.env.TIKTOK_REDIRECT_URI,
+      }),
+      { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+    );
 
-  res.redirect(`${process.env.FRONTEND_URL}/dashboard/accounts?connected=tiktok`);
+    console.log("🔑 TikTok token exchange OK | open_id:", tokenData.open_id);
+    console.log("🔑 Granted scope:", tokenData.scope);
+
+    const { data: userInfo } = await axios.get(
+      "https://open.tiktokapis.com/v2/user/info/",
+      {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+        params: { fields: "open_id,display_name,follower_count" },
+      }
+    );
+    const u = userInfo.data.user;
+    await supabase.from("platform_accounts").upsert({
+      user_id: userId,
+      platform: "tiktok",
+      handle: tokenData.open_id || u.display_name,
+      display_name: u.display_name,
+      follower_count: u.follower_count,
+      access_token: tokenData.access_token,
+      refresh_token: tokenData.refresh_token,
+      expires_at: new Date(Date.now() + tokenData.expires_in * 1000),
+    }, { onConflict: "user_id,platform" });
+
+    console.log(`✅ TikTok connected: ${u.display_name} (open_id: ${tokenData.open_id})`);
+    res.redirect(`${process.env.FRONTEND_URL}/dashboard/accounts?connected=tiktok`);
+  } catch (err) {
+    console.error("❌ TikTok callback error:", err.response?.data || err.message);
+    res.redirect(`${process.env.FRONTEND_URL}/dashboard/accounts?error=tiktok_auth_failed`);
+  }
 });
 
 // ════════════════════════════════════════════════════════════════════

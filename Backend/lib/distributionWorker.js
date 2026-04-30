@@ -55,9 +55,44 @@ async function uploadToYouTube(videoPath, title, description, account, isShorts 
     platform_url: `https://www.youtube.com/watch?v=${result.data.id}`,
   };
 }
+// ── TikTok token refresh ──────────────────────────────────────────────────────
+async function refreshTikTokToken(account) {
+  try {
+    const { data } = await axios.post(
+      "https://open.tiktokapis.com/v2/oauth/token/",
+      new URLSearchParams({
+        client_key: process.env.TIKTOK_CLIENT_KEY,
+        client_secret: process.env.TIKTOK_CLIENT_SECRET,
+        grant_type: "refresh_token",
+        refresh_token: account.refresh_token,
+      }),
+      { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+    );
+    if (data.access_token) {
+      await supabase.from("platform_accounts").update({
+        access_token: data.access_token,
+        refresh_token: data.refresh_token,
+        expires_at: new Date(Date.now() + data.expires_in * 1000),
+      }).eq("id", account.id);
+      account.access_token = data.access_token;
+      account.refresh_token = data.refresh_token;
+      console.log("🔑 [dist] TikTok token refreshed successfully");
+    }
+    return account;
+  } catch (err) {
+    console.error("🔑 [dist] TikTok token refresh failed:", err.response?.data || err.message);
+    return account;
+  }
+}
 
 // ── TikTok upload helper ──────────────────────────────────────────────────────
 async function uploadToTikTok(videoPath, title, account) {
+  // Auto-refresh if token expires within 1 hour
+  if (account.expires_at && new Date(account.expires_at) < new Date(Date.now() + 3600000)) {
+    console.log("🔑 [dist] TikTok token expiring soon, refreshing...");
+    account = await refreshTikTokToken(account);
+  }
+
   const stat = fs.statSync(videoPath);
 
   console.log(`📤 TikTok upload: file size ${stat.size}, title: "${title}"`);
