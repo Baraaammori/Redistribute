@@ -388,6 +388,22 @@ async function uploadToInstagram(videoPath, title, account) {
 
 // ── ROUTES ────────────────────────────────────────────────────────────────────
 
+// GET /api/reposts/queue-health
+router.get("/queue-health", authenticateToken, async (req, res) => {
+  try {
+    const [waiting, active, completed, failed, delayed] = await Promise.all([
+      repostQueue.getWaitingCount(),
+      repostQueue.getActiveCount(),
+      repostQueue.getCompletedCount(),
+      repostQueue.getFailedCount(),
+      repostQueue.getDelayedCount(),
+    ]);
+    res.json({ waiting, active, completed, failed, delayed, workerEnabled: process.env.DISABLE_WORKERS !== 'true' });
+  } catch (err) {
+    res.json({ error: err.message, workerEnabled: process.env.DISABLE_WORKERS !== 'true' });
+  }
+});
+
 // POST /api/reposts
 router.post("/", authenticateToken, async (req, res) => {
   const { sourceVideoId, sourceVideoUrl, sourcePlatform, title, thumbnailUrl, destinations, scheduledFor } = req.body;
@@ -407,13 +423,18 @@ router.post("/", authenticateToken, async (req, res) => {
     if (count >= 3) return res.status(403).json({ error: "Free plan limit reached. Upgrade to Pro." });
   }
 
-  const { data: sourceAccount } = await supabase
-    .from("platform_accounts").select("id").eq("user_id", req.user.userId).eq("platform", sourcePlatform).single();
-  if (!sourceAccount) return res.status(404).json({ error: `${sourcePlatform} account not connected` });
+  // For library uploads, no source account needed (direct URL from Supabase Storage)
+  let sourceAccountId = null;
+  if (sourcePlatform !== 'library') {
+    const { data: sourceAccount } = await supabase
+      .from("platform_accounts").select("id").eq("user_id", req.user.userId).eq("platform", sourcePlatform).single();
+    if (!sourceAccount) return res.status(404).json({ error: `${sourcePlatform} account not connected` });
+    sourceAccountId = sourceAccount.id;
+  }
 
   const { data: repost, error } = await supabase.from("reposts").insert({
     user_id: req.user.userId,
-    source_account_id: sourceAccount.id,
+    source_account_id: sourceAccountId,
     source_video_id: sourceVideoId,
     source_video_url: sourceVideoUrl,
     title,

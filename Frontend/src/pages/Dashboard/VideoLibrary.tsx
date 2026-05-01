@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Film, Clock, Trash2, Play, ExternalLink, Loader2, CheckCircle, XCircle, ArrowRight } from "lucide-react";
+import { Film, Clock, Trash2, Play, ExternalLink, Loader2, CheckCircle, XCircle, ArrowRight, Search } from "lucide-react";
 import { api } from "../../lib/api";
 
 // ── Status Pill ─────────────────────────────────────────────────────────────
@@ -37,6 +37,8 @@ export default function VideoLibrary() {
   const [loading, setLoading] = useState(true);
   const [selectedVideo, setSelectedVideo] = useState<any>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [search, setSearch] = useState("");
+  const [reposting, setReposting] = useState("");
   const navigate = useNavigate();
 
   const load = () => {
@@ -165,10 +167,30 @@ export default function VideoLibrary() {
         )}
 
         {/* Actions */}
-        <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button onClick={async () => {
+            setReposting("tiktok");
+            try {
+              await api.reposts.create({ sourceVideoId: v.id, sourceVideoUrl: v.file_url, sourcePlatform: "library", title: v.title, thumbnailUrl: v.thumbnail_url, destinations: ["tiktok"], scheduledFor: null });
+              alert("✅ Queued for TikTok!"); navigate("/dashboard/queue");
+            } catch(e:any) { alert(e.message); } finally { setReposting(""); }
+          }} disabled={reposting==="tiktok"}
+            style={{ padding: "10px 20px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 100, color: "white", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", gap: 8, fontFamily: "'DM Sans',sans-serif", fontWeight: 500 }}>
+            🎵 {reposting==="tiktok" ? "Queuing..." : "Repost to TikTok"}
+          </button>
+          <button onClick={async () => {
+            setReposting("youtube");
+            try {
+              await api.reposts.create({ sourceVideoId: v.id, sourceVideoUrl: v.file_url, sourcePlatform: "library", title: v.title, thumbnailUrl: v.thumbnail_url, destinations: ["youtube"], scheduledFor: null });
+              alert("✅ Queued for YouTube!"); navigate("/dashboard/queue");
+            } catch(e:any) { alert(e.message); } finally { setReposting(""); }
+          }} disabled={reposting==="youtube"}
+            style={{ padding: "10px 20px", background: "rgba(255,68,68,0.1)", border: "1px solid rgba(255,68,68,0.2)", borderRadius: 100, color: "#FF6666", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", gap: 8, fontFamily: "'DM Sans',sans-serif", fontWeight: 500 }}>
+            ▶️ {reposting==="youtube" ? "Queuing..." : "Repost to YouTube"}
+          </button>
           <button onClick={() => deleteVideo(v.id)}
-            style={{ padding: "8px 18px", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 100, color: "#EF4444", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", gap: 6, fontFamily: "'DM Sans',sans-serif" }}>
-            <Trash2 size={13} /> Delete Video
+            style={{ padding: "10px 20px", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 100, color: "#EF4444", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", gap: 6, fontFamily: "'DM Sans',sans-serif" }}>
+            <Trash2 size={13} /> Delete
           </button>
         </div>
       </div>
@@ -196,8 +218,15 @@ export default function VideoLibrary() {
           No uploads yet. <Link to="/dashboard/upload" style={{ color: "#9B7EFF", textDecoration: "none" }}>Upload your first video →</Link>
         </div>
       ) : (
+        <>
+        {/* Search */}
+        <div style={{ position: "relative", marginBottom: 16 }}>
+          <Search size={15} style={{ position: "absolute", left: 14, top: 12, color: "rgba(255,255,255,0.2)" }} />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search videos..."
+            style={{ width: "100%", padding: "10px 14px 10px 38px", background: "#111118", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, color: "white", fontSize: 13, outline: "none", fontFamily: "'DM Sans',sans-serif", boxSizing: "border-box" }} />
+        </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {videos.map(v => (
+          {videos.filter(v => !search || v.title?.toLowerCase().includes(search.toLowerCase())).map(v => (
             <div key={v.id} onClick={() => viewDetail(v.id)}
               style={{ background: "#111118", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 14, padding: "16px 20px", display: "flex", alignItems: "center", gap: 16, cursor: "pointer", transition: "all 0.15s" }}
               onMouseEnter={e => { (e.currentTarget as any).style.borderColor = "rgba(124,92,252,0.3)"; }}
@@ -222,6 +251,7 @@ export default function VideoLibrary() {
             </div>
           ))}
         </div>
+        </>
       )}
     </div>
   );

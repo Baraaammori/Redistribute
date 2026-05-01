@@ -147,19 +147,38 @@ function Queue() {
   const [reposts, setReposts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const load = () => { setLoading(true); api.reposts.list().then(setReposts).catch(()=>{}).finally(()=>setLoading(false)); };
-  useEffect(() => { load(); }, []);
+  const load = (silent = false) => { if (!silent) setLoading(true); api.reposts.list().then(setReposts).catch(()=>{}).finally(()=>setLoading(false)); };
+  useEffect(() => {
+    load();
+    const interval = setInterval(() => load(true), 5000); // Auto-poll every 5s
+    return () => clearInterval(interval);
+  }, []);
 
   const doDelete = async (id: string) => { await api.reposts.delete(id); load(); };
   const doRetry  = async (id: string) => { await api.reposts.retry(id);  load(); };
 
+  const counts = { pending: reposts.filter(r=>r.status==="pending").length, processing: reposts.filter(r=>r.status==="processing").length, done: reposts.filter(r=>r.status==="done").length, failed: reposts.filter(r=>r.status==="failed").length };
+
   return (
     <div style={{ padding:40 }}>
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:28 }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
         <h1 style={{ fontFamily:"'Syne',sans-serif", fontSize:28, fontWeight:800, color:"white", letterSpacing:-1 }}>Queue</h1>
-        <button onClick={load} style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:100, color:"rgba(255,255,255,0.5)", cursor:"pointer", fontSize:13, fontFamily:"'DM Sans',sans-serif" }}>
-          <RotateCcw size={13}/> Refresh
-        </button>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <span style={{ fontSize:11, color:"rgba(255,255,255,0.25)" }}>Auto-refreshing</span>
+          <div style={{ width:6, height:6, borderRadius:"50%", background:"#1FCFA0", animation:"pulse 2s infinite" }}/>
+          <button onClick={()=>load()} style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:100, color:"rgba(255,255,255,0.5)", cursor:"pointer", fontSize:13, fontFamily:"'DM Sans',sans-serif" }}>
+            <RotateCcw size={13}/> Refresh
+          </button>
+        </div>
+      </div>
+      {/* Status summary */}
+      <div style={{ display:"flex", gap:10, marginBottom:24 }}>
+        {[{label:"Pending",val:counts.pending,color:"#F0C94A"},{label:"Processing",val:counts.processing,color:"#60A5FA"},{label:"Done",val:counts.done,color:"#1FCFA0"},{label:"Failed",val:counts.failed,color:"#EF4444"}].map(s=>(
+          <div key={s.label} style={{ flex:1, background:"#111118", border:"1px solid rgba(255,255,255,0.06)", borderRadius:12, padding:"12px 16px", textAlign:"center" }}>
+            <div style={{ fontSize:22, fontWeight:800, color:s.color, fontFamily:"'Syne',sans-serif" }}>{s.val}</div>
+            <div style={{ fontSize:11, color:"rgba(255,255,255,0.3)", marginTop:2 }}>{s.label}</div>
+          </div>
+        ))}
       </div>
       {loading ? (
         <div style={{ textAlign:"center", padding:48, color:"rgba(255,255,255,0.25)" }}>Loading…</div>
@@ -168,7 +187,7 @@ function Queue() {
       ) : (
         <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
           {reposts.map(r => (
-            <div key={r.id} style={{ background:"#111118", border:"1px solid rgba(255,255,255,0.06)", borderRadius:14, padding:"16px 20px", display:"flex", alignItems:"center", gap:16 }}>
+            <div key={r.id} style={{ background:"#111118", border:`1px solid ${r.status==="processing"?"rgba(59,130,246,0.3)":r.status==="failed"?"rgba(239,68,68,0.2)":"rgba(255,255,255,0.06)"}`, borderRadius:14, padding:"16px 20px", display:"flex", alignItems:"center", gap:16, transition:"border-color 0.3s" }}>
               {r.thumbnail_url && <img src={r.thumbnail_url} alt="" style={{ width:72, height:44, objectFit:"cover", borderRadius:6, flexShrink:0 }}/>}
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ fontSize:14, color:"rgba(255,255,255,0.85)", fontWeight:400, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.title || "Untitled"}</div>
@@ -186,9 +205,11 @@ function Queue() {
           ))}
         </div>
       )}
+      <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }`}</style>
     </div>
   );
 }
+
 
 // ── ACCOUNTS ───────────────────────────────────────────────────────────────────
 function Accounts() {

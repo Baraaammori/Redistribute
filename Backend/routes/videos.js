@@ -49,7 +49,7 @@ router.get("/", authenticateToken, async (req, res) => {
     if (platform === "tiktok") {
       const { data } = await axios.post(
         "https://open.tiktokapis.com/v2/video/list/",
-        { max_count: 20 },
+        { max_count: 20, cursor: 0 },
         {
           headers: {
             Authorization: `Bearer ${account.access_token}`,
