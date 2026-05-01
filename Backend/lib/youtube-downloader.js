@@ -5,10 +5,11 @@ const { execFile } = require('child_process');
 const { UnrecoverableError } = require('bullmq');
 
 /**
- * YouTube Downloader with Anti-Bot Evasion
+ * Video Downloader with Anti-Bot Evasion
+ * Supports YouTube and TikTok URLs.
  * Implements proxy rotation, user-agent spoofing, and cookie management.
  */
-class YouTubeDownloader {
+class VideoDownloader {
   constructor() {
     this.binPath = this._getBinPath();
     this.proxies = process.env.YOUTUBE_PROXIES ? process.env.YOUTUBE_PROXIES.split(',') : [];
@@ -33,6 +34,13 @@ class YouTubeDownloader {
   /**
    * Builds the yt-dlp arguments with all anti-bot evasions
    */
+  /**
+   * Detect if URL is a TikTok link
+   */
+  _isTikTokUrl(url) {
+    return /tiktok\.com/.test(url || '');
+  }
+
   _buildArgs(url, dest, options = {}) {
     const args = [
       url,
@@ -41,11 +49,15 @@ class YouTubeDownloader {
       '-o', dest,
       '--no-playlist',
       '--no-check-certificates',
-      '--extractor-args', 'youtube:player_client=ios,android,web',
       '--socket-timeout', '30',
       '--retries', '3',
       '--no-warnings',
     ];
+
+    // YouTube-specific extractor args (skip for TikTok)
+    if (!this._isTikTokUrl(url)) {
+      args.push('--extractor-args', 'youtube:player_client=ios,android,web');
+    }
 
     // 1. Cookie Authentication (Primary bypass)
     const cookieFile = process.env.YOUTUBE_COOKIES_FILE;
@@ -87,10 +99,11 @@ class YouTubeDownloader {
   _detectAntiBotError(stderr) {
     if (!stderr) return false;
     const botPatterns = [
-      'Sign in to confirm you’re not a bot',
+      'Sign in to confirm you\'re not a bot',
       'HTTP Error 429',
       'Rate-limit exceeded',
-      'Video unavailable'
+      'Video unavailable',
+      'Unable to download video',
     ];
     return botPatterns.some(pattern => stderr.includes(pattern));
   }
@@ -161,4 +174,4 @@ class YouTubeDownloader {
   }
 }
 
-module.exports = new YouTubeDownloader();
+module.exports = new VideoDownloader();

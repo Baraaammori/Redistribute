@@ -122,18 +122,25 @@ function isYouTubeUrl(url) {
 }
 
 /**
- * Download video using yt-dlp for YouTube, or Axios for direct URLs.
- * Always outputs a real video file (MP4 preferred).
+ * Detect if a URL is a TikTok video URL.
+ */
+function isTikTokUrl(url) {
+  return /tiktok\.com/.test(url || '');
+}
+
+/**
+ * Download video using yt-dlp for YouTube/TikTok, or Axios for direct URLs.
+ * yt-dlp downloads TikTok videos WITHOUT watermarks automatically.
  */
 async function downloadVideo(url, id, jobAttemptsMade = 0) {
-  if (isYouTubeUrl(url)) {
+  if (isYouTubeUrl(url) || isTikTokUrl(url)) {
     return downloadWithYtDlp(url, id, jobAttemptsMade);
   }
   return downloadDirect(url, id);
 }
 
 /**
- * Download from YouTube using the dedicated downloader class.
+ * Download from YouTube/TikTok using the dedicated downloader class.
  * Supports cookies, proxy rotation, and anti-bot evasion.
  */
 function downloadWithYtDlp(url, id, jobAttemptsMade = 0) {
