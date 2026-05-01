@@ -88,12 +88,22 @@ if (process.env.DISABLE_WORKERS !== 'true') {
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
     console.error(`❌ [reposts] Job ${job.id} failed after ${duration}s:`, err.message);
     
-    if (err instanceof UnrecoverableError) {
+    // Auto-detect permanent errors even if sub-functions forgot to use UnrecoverableError
+    const msg = (err.message || '').toLowerCase();
+    const permanentPatterns = [
+      'invalid credentials', 'invalid_grant', 'token has been expired or revoked',
+      'account needs reconnection', 'no refresh_token', 'permission denied',
+      'quota exceeded', 'unrecoverable', 'reconnect',
+    ];
+    const isPermanent = err instanceof UnrecoverableError || err.unrecoverable || permanentPatterns.some(p => msg.includes(p));
+
+    if (isPermanent) {
       console.error(`🚫 [reposts] PERMANENT failure — will not retry: ${err.message}`);
       await supabase.from("reposts").update({ status: "failed", error: err.message }).eq("id", repostId);
-      throw err;
+      throw err instanceof UnrecoverableError ? err : new UnrecoverableError(err.message);
     }
 
+    console.log(`🔄 [reposts] Transient failure — BullMQ may retry (attempt ${job.attemptsMade + 1})`);
     await supabase.from("reposts").update({ status: "failed", error: err.message }).eq("id", repostId);
     throw err;
   } finally {
@@ -238,21 +248,95 @@ async function ensureTikTokMP4(videoPath, id) {
   }
 }
 
+/**
+ * Refresh a YouTube/Google OAuth2 access token using the refresh_token.
+ * Saves new tokens to the database.
+ */
+async function refreshYouTubeToken(account) {
+  console.log(`🔑 [youtube] Refreshing token for account ${account.id}...`);
+  try {
+    const auth = new google.auth.OAuth2(
+      process.env.YOUTUBE_CLIENT_ID,
+      process.env.YOUTUBE_CLIENT_SECRET,
+      process.env.YOUTUBE_REDIRECT_URI || 'postmessage'
+    );
+    auth.setCredentials({ refresh_token: account.refresh_token });
+    const { credentials } = await auth.refreshAccessToken();
+
+    // Save refreshed tokens to DB
+    const updates = {
+      access_token: credentials.access_token,
+      expires_at: credentials.expiry_date ? new Date(credentials.expiry_date) : new Date(Date.now() + 3600000),
+    };
+    if (credentials.refresh_token) updates.refresh_token = credentials.refresh_token;
+
+    await supabase.from("platform_accounts").update(updates).eq("id", account.id);
+
+    account.access_token = credentials.access_token;
+    if (credentials.refresh_token) account.refresh_token = credentials.refresh_token;
+    account.expires_at = updates.expires_at;
+
+    console.log(`✅ [youtube] Token refreshed, new expiry: ${updates.expires_at.toISOString()}`);
+    return account;
+  } catch (err) {
+    const msg = err.message || '';
+    console.error(`❌ [youtube] Token refresh failed: ${msg}`);
+    // If refresh token is revoked/invalid, this is permanent
+    if (msg.includes('invalid_grant') || msg.includes('Token has been expired or revoked')) {
+      throw new UnrecoverableError(`YouTube account needs reconnection: ${msg}. Go to Accounts → Reconnect YouTube.`);
+    }
+    throw err; // Transient error, allow retry
+  }
+}
+
 async function uploadToYouTube(videoPath, title, account) {
+  // 1. Check token expiry — refresh if within 5 minutes of expiring
+  const expiresAt = account.expires_at ? new Date(account.expires_at) : null;
+  const isExpired = !expiresAt || expiresAt < new Date(Date.now() + 5 * 60 * 1000);
+
+  if (isExpired) {
+    console.log(`⏰ [youtube] Token expired or expiring soon (${expiresAt?.toISOString() || 'no expiry'}), refreshing...`);
+    if (!account.refresh_token) {
+      throw new UnrecoverableError('YouTube account has no refresh_token. Reconnect in Accounts page.');
+    }
+    account = await refreshYouTubeToken(account);
+  }
+
+  // 2. Upload with valid token
+  console.log(`📤 [youtube] Uploading: "${(title || '').slice(0, 60)}" (token valid until ${new Date(account.expires_at).toISOString()})`);
   const auth = new google.auth.OAuth2(
     process.env.YOUTUBE_CLIENT_ID,
-    process.env.YOUTUBE_CLIENT_SECRET
+    process.env.YOUTUBE_CLIENT_SECRET,
+    process.env.YOUTUBE_REDIRECT_URI || 'postmessage'
   );
   auth.setCredentials({ access_token: account.access_token, refresh_token: account.refresh_token });
   const yt = google.youtube({ version: "v3", auth });
-  await yt.videos.insert({
-    part: ["snippet", "status"],
-    requestBody: {
-      snippet: { title: title || "Posted via Redistribute.io", description: "Redistributed via redistribute.io" },
-      status:  { privacyStatus: "public" },
-    },
-    media: { body: fs.createReadStream(videoPath) },
-  });
+
+  try {
+    const res = await yt.videos.insert({
+      part: ["snippet", "status"],
+      requestBody: {
+        snippet: { title: title || "Posted via Redistribute.io", description: "Redistributed via redistribute.io" },
+        status:  { privacyStatus: "public" },
+      },
+      media: { body: fs.createReadStream(videoPath) },
+    });
+    console.log(`✅ [youtube] Upload success! Video ID: ${res.data.id}`);
+    return res.data;
+  } catch (err) {
+    const status = err.code || err.response?.status;
+    const msg = err.message || '';
+    console.error(`❌ [youtube] Upload failed [${status}]: ${msg}`);
+
+    // Permanent auth failures — don't retry
+    if (status === 401 || msg.includes('Invalid Credentials') || msg.includes('invalid_grant')) {
+      throw new UnrecoverableError(`YouTube auth failed: ${msg}. Reconnect your YouTube account.`);
+    }
+    if (status === 403 && msg.includes('quotaExceeded')) {
+      throw new UnrecoverableError(`YouTube API quota exceeded. Try again tomorrow.`);
+    }
+    throw err; // 500, timeout, network errors → allow BullMQ retry
+  }
 }
 
 async function refreshTikTokToken(account) {

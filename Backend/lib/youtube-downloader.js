@@ -75,8 +75,9 @@ class VideoDownloader {
         // Fallback to original just in case
         args.push('--cookies', cookieFile);
       }
-    } else if (options.useBrowserCookies) {
-      // Fallback for local development
+    } else if (options.useBrowserCookies && this._canUseBrowserCookies()) {
+      // Only use browser cookies on local desktop with Chrome CLOSED
+      console.log(`🍪 [youtube-dl] Attempting browser cookies (local desktop only)`);
       args.push('--cookies-from-browser', 'chrome');
     }
 
@@ -109,20 +110,33 @@ class VideoDownloader {
   }
 
   /**
+   * Detect if browser cookies are safe to use.
+   * NEVER use on servers, Docker, CI, or headless environments.
+   */
+  _canUseBrowserCookies() {
+    // Never in Docker
+    if (fs.existsSync('/.dockerenv')) return false;
+    // Never if explicitly disabled
+    if (process.env.NO_BROWSER_COOKIES === 'true') return false;
+    // Never on Linux servers (headless)
+    if (os.platform() === 'linux' && !process.env.DISPLAY) return false;
+    // Only on Windows/Mac local dev
+    return os.platform() === 'win32' || os.platform() === 'darwin';
+  }
+
+  /**
    * Main download method with fallback strategies
    */
   async download(url, id, attempt = 1) {
-    const dest = path.join("/tmp", `redistribute_${id}_ytdlp.mkv`);
+    const dest = path.join(os.tmpdir(), `redistribute_${id}_ytdlp.mkv`);
 
     if (!fs.existsSync(this.binPath)) {
       throw new Error(`yt-dlp binary not found at ${this.binPath}. Run npm run build.`);
     }
 
-    // Strategy 1: Standard download with available cookies/proxies
+    // Only try browser cookies on retry IF we're on a local desktop AND no cookies file
     let options = {};
-    
-    // Strategy 2: If we failed previously, try browser cookies (if local)
-    if (attempt > 1 && !process.env.YOUTUBE_COOKIES_FILE) {
+    if (attempt > 1 && !process.env.YOUTUBE_COOKIES_FILE && this._canUseBrowserCookies()) {
       options.useBrowserCookies = true;
     }
 
