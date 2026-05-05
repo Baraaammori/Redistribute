@@ -16,12 +16,29 @@ router.get("/", authenticateToken, async (req, res) => {
 
 // ── DELETE /api/accounts/:platform  ───────────────────────────────────────────
 router.delete("/:platform", authenticateToken, async (req, res) => {
-  await supabase
-    .from("platform_accounts")
-    .delete()
-    .eq("user_id", req.user.userId)
-    .eq("platform", req.params.platform);
-  res.json({ ok: true });
+  try {
+    const { data: acc } = await supabase
+      .from("platform_accounts")
+      .select("id")
+      .eq("user_id", req.user.userId)
+      .eq("platform", req.params.platform)
+      .single();
+
+    if (acc) {
+      // Unlink any old reposts that reference this account so we don't hit foreign key constraints
+      await supabase.from("reposts").update({ source_account_id: null }).eq("source_account_id", acc.id);
+      
+      const { error } = await supabase
+        .from("platform_accounts")
+        .delete()
+        .eq("id", acc.id);
+        
+      if (error) throw new Error(error.message);
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message || "Failed to disconnect account" });
+  }
 });
 
 // ════════════════════════════════════════════════════════════════════

@@ -222,7 +222,14 @@ function Accounts() {
     try { const { url } = await api.accounts.authUrl(p); window.location.href = url; }
     catch { alert("Failed to get OAuth URL. Check your backend .env settings."); }
   };
-  const disconnect = async (p: string) => { await api.accounts.disconnect(p); load(); };
+  const disconnect = async (p: string) => { 
+    try {
+      await api.accounts.disconnect(p); 
+      load(); 
+    } catch(err:any) {
+      alert(`Could not disconnect: ${err.message}`);
+    }
+  };
 
   return (
     <div style={{ padding:40 }}>
