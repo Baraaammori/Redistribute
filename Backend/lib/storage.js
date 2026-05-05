@@ -23,25 +23,50 @@ async function ensureBucket() {
 }
 
 /**
- * Upload a file to Supabase Storage
- * @param {string} localPath - absolute path to file on disk
- * @param {string} storagePath - path within bucket (e.g., "user123/video_abc.mp4")
+ * Upload a file to Supabase Storage.
+ *
+ * @param {string|Buffer} localPathOrBuffer
+ *   - string → file path; streamed via REST API (no full file loaded into RAM)
+ *   - Buffer → in-memory bytes (use for small files: thumbnails, watermarks, SRTs)
+ * @param {string} storagePath - path within bucket
  * @param {string} contentType - MIME type
  * @returns {{ url: string, path: string }}
  */
-async function uploadFile(localPath, storagePath, contentType = "video/mp4") {
+async function uploadFile(localPathOrBuffer, storagePath, contentType = "video/mp4") {
   await ensureBucket();
 
-  const fileBuffer = fs.readFileSync(localPath);
+  if (typeof localPathOrBuffer === "string") {
+    // Stream directly from disk — avoids loading the full video into RAM
+    const axios = require("axios");
+    const { size } = fs.statSync(localPathOrBuffer);
+    const stream = fs.createReadStream(localPathOrBuffer);
 
-  const { data, error } = await supabase.storage
-    .from(BUCKET_NAME)
-    .upload(storagePath, fileBuffer, {
-      contentType,
-      upsert: true,
-    });
+    try {
+      await axios({
+        method: "post",
+        url: `${process.env.SUPABASE_URL}/storage/v1/object/${BUCKET_NAME}/${storagePath}`,
+        data: stream,
+        headers: {
+          Authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
+          "Content-Type": contentType,
+          "Content-Length": size,
+          "x-upsert": "true",
+        },
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+      });
+    } catch (err) {
+      const msg = err.response?.data?.message || err.response?.data?.error || err.message;
+      throw new Error(`Storage upload failed: ${msg}`);
+    }
+  } else {
+    // Buffer upload for small in-memory files (thumbnails, watermarks, SRTs)
+    const { error } = await supabase.storage
+      .from(BUCKET_NAME)
+      .upload(storagePath, localPathOrBuffer, { contentType, upsert: true });
 
-  if (error) throw new Error(`Storage upload failed: ${error.message}`);
+    if (error) throw new Error(`Storage upload failed: ${error.message}`);
+  }
 
   const { data: urlData } = supabase.storage
     .from(BUCKET_NAME)

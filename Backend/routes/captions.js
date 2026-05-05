@@ -117,7 +117,9 @@ router.post("/:videoId/generate", authenticateToken, async (req, res) => {
       const captionedPath = path.join(tmpDir, "captioned.mp4");
       await burnCaptions(videoPath, assPath, captionedPath);
 
-      const captionedStoragePath = `${userId}/${videoId}/captioned_${platform}_${targetId}.mp4`;
+      // Use a timestamp in the path so CDN serves the fresh file, not a cached old version
+      const ts = Date.now();
+      const captionedStoragePath = `${userId}/${videoId}/captioned_${platform}_${targetId}_${ts}.mp4`;
       const { url } = await uploadFile(captionedPath, captionedStoragePath, "video/mp4");
       captionedVideoUrl = url;
     }
@@ -352,6 +354,7 @@ function burnCaptions(videoPath, assPath, outputPath) {
       "-y", "-i", videoPath,
       "-vf", `ass=${escapedAssPath}`,
       "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+      "-threads", "1", // <-- CRITICAL: Prevents OOM crashes on Render Free (512MB RAM)
       "-c:a", "copy",
       "-movflags", "+faststart",
       outputPath,

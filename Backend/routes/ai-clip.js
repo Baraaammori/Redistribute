@@ -251,8 +251,7 @@ router.post("/:videoId/generate", authenticateToken, async (req, res) => {
         await cutClip(videoPath, start, end, clipFile);
 
         const storagePath = `clips/${userId}/${videoId}/ai_${Date.now()}_${i}.mp4`;
-        const fileBuffer = fs.readFileSync(clipFile);
-        const publicUrl = await uploadFile(storagePath, fileBuffer, "video/mp4");
+        const { url: publicUrl } = await uploadFile(clipFile, storagePath, "video/mp4");
 
         await supabase.from("clips").insert({
           video_id: videoId,

@@ -42,7 +42,7 @@ router.post("/watermark", authenticateToken, upload.single("watermark"), async (
     const ext = req.file.mimetype === "image/svg+xml" ? ".svg" : ".png";
     const storagePath = `watermarks/${userId}/watermark${ext}`;
 
-    const publicUrl = await uploadFile(storagePath, req.file.buffer, req.file.mimetype);
+    const { url: publicUrl } = await uploadFile(req.file.buffer, storagePath, req.file.mimetype);
 
     await supabase.from("user_settings").upsert({
       user_id: userId,
