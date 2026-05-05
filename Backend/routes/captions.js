@@ -209,6 +209,8 @@ async function transcribeWhisper(audioPath) {
     form.append("file", fs.createReadStream(audioPath), { filename: "audio.wav", contentType: "audio/wav" });
     form.append("model", "whisper-large-v3");
     form.append("response_format", "verbose_json");
+    form.append("timestamp_granularities[]", "word");
+    form.append("timestamp_granularities[]", "segment");
 
     const { data } = await axios.post(
       "https://api.groq.com/openai/v1/audio/transcriptions",
@@ -216,17 +218,43 @@ async function transcribeWhisper(audioPath) {
       { headers: { ...form.getHeaders(), Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
         maxBodyLength: Infinity, timeout: 300000 }
     );
-    // Groq returns words in segments if requested, but current API might vary. 
-    // We flatten segments to ensure our ASS generator works.
-    const words = [];
-    if (data.segments) data.segments.forEach(seg => { if (seg.words) words.push(...seg.words); });
-    // Normalize: Groq uses 'text', OpenAI uses 'word'
-    const normalized = (words.length > 0 ? words : []).map(w => ({
-      word: w.word || w.text || "",
-      start: w.start,
-      end: w.end,
-    }));
-    data.words = normalized;
+
+    console.log("[Whisper] Groq response keys:", Object.keys(data));
+    console.log("[Whisper] Segments count:", data.segments?.length, "| Top-level words:", data.words?.length);
+
+    // Try 1: Use top-level words array (Groq may return this)
+    let words = [];
+    if (data.words?.length) {
+      words = data.words.map(w => ({ word: w.word || w.text || "", start: w.start, end: w.end }));
+    }
+    // Try 2: Flatten words from inside segments
+    if (!words.length && data.segments) {
+      data.segments.forEach(seg => {
+        if (seg.words?.length) {
+          seg.words.forEach(w => words.push({ word: w.word || w.text || "", start: w.start, end: w.end }));
+        }
+      });
+    }
+    // Try 3: Fallback — split segment text into synthetic words with interpolated timestamps
+    if (!words.length && data.segments?.length) {
+      console.log("[Whisper] No word-level data. Building synthetic words from segments...");
+      data.segments.forEach(seg => {
+        const segWords = (seg.text || "").trim().split(/\s+/).filter(Boolean);
+        if (!segWords.length) return;
+        const segDuration = (seg.end || 0) - (seg.start || 0);
+        const wordDuration = segDuration / segWords.length;
+        segWords.forEach((w, i) => {
+          words.push({
+            word: w,
+            start: seg.start + i * wordDuration,
+            end: seg.start + (i + 1) * wordDuration,
+          });
+        });
+      });
+    }
+
+    data.words = words;
+    console.log("[Whisper] Final word count:", words.length);
     return data;
   } else {
     // Cloud mode (OpenAI API)
