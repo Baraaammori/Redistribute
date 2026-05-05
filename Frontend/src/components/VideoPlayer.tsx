@@ -1,5 +1,5 @@
-import React, { useRef, useState } from "react";
-import { Play, Pause, Volume2, VolumeX, Maximize2, RotateCcw } from "lucide-react";
+import React, { useRef, useState, useEffect } from "react";
+import { Play, Pause, Volume2, VolumeX, Maximize2, RotateCcw, Loader2 } from "lucide-react";
 
 interface VideoPlayerProps {
   src: string;
@@ -16,15 +16,30 @@ interface VideoPlayerProps {
     bold: boolean;
   };
   maxHeight?: number;
+  /** When true, overlays a "Processing new version…" spinner on top of the player */
+  processing?: boolean;
 }
 
-export default function VideoPlayer({ src, title, poster, captionOverlay, maxHeight = 500 }: VideoPlayerProps) {
+export default function VideoPlayer({ src, title, poster, captionOverlay, maxHeight = 500, processing }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [showControls, setShowControls] = useState(true);
+  const [hasError, setHasError] = useState(false);
+
+  // Reload the native video element whenever the src URL changes.
+  // Browsers don't re-fetch when only the React `src` prop changes —
+  // the HTMLVideoElement.load() call is required.
+  useEffect(() => {
+    if (!src) return;
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+    setHasError(false);
+    videoRef.current?.load();
+  }, [src]);
 
   const togglePlay = () => {
     if (!videoRef.current) return;
@@ -123,8 +138,36 @@ export default function VideoPlayer({ src, title, poster, captionOverlay, maxHei
         onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime || 0)}
         onLoadedMetadata={() => setDuration(videoRef.current?.duration || 0)}
         onEnded={() => setIsPlaying(false)}
+        onError={() => setHasError(true)}
         style={{ display: "block", width: "100%", maxHeight, objectFit: "contain", cursor: "pointer" }}
       />
+
+      {/* Processing overlay — shown while a new captioned version is being rendered */}
+      {processing && (
+        <div style={{
+          position: "absolute", inset: 0, zIndex: 30,
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+          background: "rgba(10,10,15,0.82)", backdropFilter: "blur(4px)",
+        }}>
+          <Loader2 size={32} color="#9B7EFF" style={{ animation: "spin 1s linear infinite", marginBottom: 12 }} />
+          <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", fontFamily: "'DM Sans',sans-serif" }}>
+            Processing new version…
+          </span>
+        </div>
+      )}
+
+      {/* 404 / load-error fallback */}
+      {hasError && !processing && (
+        <div style={{
+          position: "absolute", inset: 0, zIndex: 30,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: "rgba(10,10,15,0.9)",
+        }}>
+          <span style={{ fontSize: 13, color: "rgba(239,68,68,0.6)", fontFamily: "'DM Sans',sans-serif" }}>
+            Video unavailable — try regenerating
+          </span>
+        </div>
+      )}
 
       {/* Caption overlay for live preview */}
       {captionOverlay && (

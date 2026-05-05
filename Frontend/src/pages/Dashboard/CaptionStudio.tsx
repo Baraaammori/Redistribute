@@ -32,6 +32,14 @@ const POSITIONS = [
   { id: "bottom", label: "Bottom", marginV: 80 },
 ];
 
+const STATUS_LABELS: Record<string, string> = {
+  processing:      "Starting up…",
+  downloading:     "Downloading video…",
+  extracting_audio:"Extracting audio…",
+  transcribing:    "Transcribing with Whisper… 1–3 min.",
+  rendering:       "Burning captions into video…",
+};
+
 const inputStyle: React.CSSProperties = {
   background: "#0A0A0F", border: "1px solid rgba(255,255,255,0.08)",
   borderRadius: 8, padding: "8px 12px", color: "white", fontSize: 13, width: "100%",
@@ -293,7 +301,9 @@ export default function CaptionStudio() {
           {pendingCaption && (
             <div style={{ background: "rgba(124,92,252,0.08)", border: "1px solid rgba(124,92,252,0.2)", borderRadius: 12, padding: "14px 18px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
               <Loader2 size={16} color="#9B7EFF" style={{ animation: "spin 1s linear infinite", flexShrink: 0 }} />
-              <span style={{ fontSize: 13, color: "#9B7EFF" }}>Transcribing with Whisper… 1–3 min.</span>
+              <span style={{ fontSize: 13, color: "#9B7EFF" }}>
+                {STATUS_LABELS[pendingCaption.status] || "Processing… 1–3 min."}
+              </span>
               <button onClick={() => api.captions.list(selectedVideo).then(setCaptions)} style={{ marginLeft: "auto", background: "none", border: "none", color: "rgba(255,255,255,0.3)", cursor: "pointer" }}>
                 <RefreshCw size={14} />
               </button>
@@ -334,7 +344,8 @@ export default function CaptionStudio() {
             <VideoPlayer
               src={previewVideoUrl || videoSrc}
               title={previewVideoUrl ? "✅ Captioned Video" : "Original Video"}
-              captionOverlay={!previewVideoUrl ? {
+              processing={!!pendingCaption}
+              captionOverlay={!previewVideoUrl && !pendingCaption ? {
                 text: "Sample caption text",
                 fontFamily, fontSize, color: fontColor,
                 outlineColor, position, bold,

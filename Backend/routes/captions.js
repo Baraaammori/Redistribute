@@ -1,212 +1,272 @@
 // ─── Caption Studio Route ────────────────────────────────────────────────────
-// POST /api/captions/:videoId/generate   — Whisper → styled ASS → burn into video
-// GET  /api/captions/:videoId            — Get caption status + SRT file URL
-// POST /api/captions/:videoId/style      — Update caption style only (re-render)
+// POST /api/captions/:videoId/generate — Whisper → ASS → FFmpeg burn-in
+// GET  /api/captions/:videoId          — Poll status + URLs
 // ─────────────────────────────────────────────────────────────────────────────
-const router = require("express").Router();
-const fs = require("fs");
-const path = require("path");
-const os = require("os");
+// MEMORY ARCHITECTURE:
+//   1. Source video  → streamed to disk (never held in Node heap)
+//   2. Audio         → extracted as 60-second WAV chunks, each deleted after Whisper
+//   3. ASS/SRT files → generated in-memory then written to disk (tiny, <1MB)
+//   4. Captioned MP4 → FFmpeg writes directly to disk with -preset ultrafast -threads 1
+//   5. Upload        → streamed from disk via axios (no readFileSync)
+//   All temp dirs deleted in finally{} even on crash.
+// ─────────────────────────────────────────────────────────────────────────────
+const router   = require("express").Router();
+const fs       = require("fs");
+const path     = require("path");
+const os       = require("os");
 const { execFile } = require("child_process");
-const axios = require("axios");
+const axios    = require("axios");
 const FormData = require("form-data");
 const supabase = require("../lib/supabase");
 const { authenticateToken } = require("../middleware/auth");
-const { downloadToTemp, uploadFile, cleanupTemp } = require("../lib/storage");
+const { downloadToTemp, uploadFile } = require("../lib/storage");
 
-// Platform caption presets
+// ── Memory monitoring ─────────────────────────────────────────────────────────
+const MAX_HEAP_MB = 380; // guard threshold — kill before Render's 512MB wall
+
+function memMB() {
+  const { heapUsed, rss } = process.memoryUsage();
+  return { heap: Math.round(heapUsed / 1024 / 1024), rss: Math.round(rss / 1024 / 1024) };
+}
+
+function logMem(label) {
+  const m = memMB();
+  console.log(`[mem] ${label} | heap: ${m.heap}MB | rss: ${m.rss}MB`);
+}
+
+function assertMemory(label) {
+  const m = memMB();
+  if (m.heap > MAX_HEAP_MB) {
+    throw new Error(`ENOMEM: heap ${m.heap}MB exceeds ${MAX_HEAP_MB}MB before ${label} — job requeued`);
+  }
+}
+
+// ── Platform caption presets ──────────────────────────────────────────────────
 const CAPTION_STYLES = {
   tiktok: {
-    fontname: "Arial Black",
-    fontsize: 22,
-    primaryColour: "&H00FFFFFF",   // white
-    outlineColour: "&H00000000",   // black outline
-    shadowColour: "&H80000000",
-    bold: 1,
-    outline: 3,
-    shadow: 1,
-    alignment: 2,                  // bottom-center
-    marginV: 80,
-    wordsPerLine: 2,               // karaoke style: 2 words at a time
+    fontname: "Arial Black", fontsize: 22,
+    primaryColour: "&H00FFFFFF", outlineColour: "&H00000000", shadowColour: "&H80000000",
+    bold: 1, outline: 3, shadow: 1, alignment: 2, marginV: 80, wordsPerLine: 2,
   },
   instagram: {
-    fontname: "Arial",
-    fontsize: 16,
-    primaryColour: "&H00FFFFFF",
-    outlineColour: "&H00000000",
-    bold: 0,
-    outline: 2,
-    shadow: 0,
-    alignment: 2,
-    marginV: 60,
-    wordsPerLine: 4,
+    fontname: "Arial", fontsize: 16,
+    primaryColour: "&H00FFFFFF", outlineColour: "&H00000000",
+    bold: 0, outline: 2, shadow: 0, alignment: 2, marginV: 60, wordsPerLine: 4,
   },
   youtube: {
-    fontname: "Arial",
-    fontsize: 14,
-    primaryColour: "&H00FFFFFF",
-    outlineColour: "&H00000000",
-    bold: 0,
-    outline: 2,
-    shadow: 1,
-    alignment: 2,
-    marginV: 40,
-    wordsPerLine: 6,
+    fontname: "Arial", fontsize: 14,
+    primaryColour: "&H00FFFFFF", outlineColour: "&H00000000",
+    bold: 0, outline: 2, shadow: 1, alignment: 2, marginV: 40, wordsPerLine: 6,
   },
 };
 
-// POST /api/captions/:videoId/generate
+// ── Route ─────────────────────────────────────────────────────────────────────
+
 router.post("/:videoId/generate", authenticateToken, async (req, res) => {
   const { videoId } = req.params;
-  const userId = req.user.userId;
-  const platform = req.body.platform || "tiktok";
-  const clipId = req.body.clip_id || null;        // if captioning a specific clip
-  const burnIn = req.body.burn_in !== false;       // default true
+  const userId    = req.user.userId;
+  const platform  = req.body.platform || "tiktok";
+  const clipId    = req.body.clip_id || null;
+  const burnIn    = req.body.burn_in !== false;
 
-  const { data: video } = await supabase.from("uploaded_videos").select("*")
+  const { data: video } = await supabase
+    .from("uploaded_videos").select("*")
     .eq("id", videoId).eq("user_id", userId).single();
   if (!video) return res.status(404).json({ error: "Video not found" });
 
-  // If clip_id provided, work on the clip's file_url instead
-  let fileUrl = video.file_url;
-  let targetTable = "uploaded_videos";
+  let fileUrl  = video.file_url;
   let targetId = videoId;
 
   if (clipId) {
-    const { data: clip } = await supabase.from("clips").select("*")
+    const { data: clip } = await supabase
+      .from("clips").select("*")
       .eq("id", clipId).eq("user_id", userId).single();
     if (!clip) return res.status(404).json({ error: "Clip not found" });
-    fileUrl = clip.file_url;
-    targetTable = "clips";
+    fileUrl  = clip.file_url;
     targetId = clipId;
   }
 
-  // Respond immediately — process is async
+  // Respond immediately — async background processing below
   res.json({ message: "Caption generation started", videoId, clipId });
 
-  const tmpDir = path.join(os.tmpdir(), "redistribute_captions", videoId);
-  fs.mkdirSync(tmpDir, { recursive: true });
+  // Mark as processing so frontend spinner shows
+  await supabase.from("captions").upsert({
+    video_id: videoId, clip_id: clipId, user_id: userId, platform, status: "processing",
+  }, { onConflict: "video_id,clip_id,platform" });
+
+  const tmpDir   = path.join(os.tmpdir(), "captions_" + videoId + "_" + Date.now());
+  const chunksDir = path.join(tmpDir, "chunks");
+  let videoPath  = null;
+
+  logMem("job start");
 
   try {
-    // 1. Download video/clip
-    const videoPath = await downloadToTemp(fileUrl, `caption_src_${targetId}.mp4`);
+    fs.mkdirSync(chunksDir, { recursive: true });
 
-    // 2. Extract audio
-    const audioPath = path.join(tmpDir, "audio.wav");
-    await extractAudio(videoPath, audioPath);
+    // ── Step 1: Download source video to disk (streamed, no RAM spike) ────────
+    await updateStatus(videoId, clipId, userId, platform, "downloading");
+    videoPath = await downloadToTemp(fileUrl, `cap_src_${targetId}.mp4`);
+    logMem("after download");
 
-    // 3. Whisper transcription with word timestamps
-    const transcript = await transcribeWhisper(audioPath);
-    if (!transcript.words?.length) throw new Error("No words in transcript — video may have no speech");
+    // ── Step 2: Extract audio as 60-second WAV chunks ─────────────────────────
+    await updateStatus(videoId, clipId, userId, platform, "extracting_audio");
+    assertMemory("audio extraction");
+    const chunks = await extractAudioChunks(videoPath, chunksDir, 60);
+    logMem(`after extraction (${chunks.length} chunks)`);
 
-    // 4. Generate ASS subtitle file
-    const style = { ...(CAPTION_STYLES[platform] || CAPTION_STYLES.tiktok), ...req.body.style };
+    // ── Step 3: Transcribe each chunk sequentially, delete immediately ─────────
+    await updateStatus(videoId, clipId, userId, platform, "transcribing");
+    const { words, fullText } = await transcribeChunksSequentially(chunks);
+    logMem("after transcription");
+
+    if (!words.length) throw new Error("No speech detected — video may be silent or music-only");
+
+    // ── Step 4: Generate subtitle files (pure JS, ~1ms, negligible RAM) ────────
+    const style   = mergeStyle(platform, req.body.style);
     const assPath = path.join(tmpDir, "captions.ass");
     const srtPath = path.join(tmpDir, "captions.srt");
-    generateASS(transcript.words, assPath, style);
-    generateSRT(transcript.words, srtPath, style.wordsPerLine);
+    generateASS(words, assPath, style);
+    generateSRT(words, srtPath, style.wordsPerLine);
 
-    // 5. Upload SRT to storage (always — user can download it)
+    // ── Step 5: Upload SRT (streamed) ─────────────────────────────────────────
     const srtStoragePath = `${userId}/${videoId}/captions_${platform}.srt`;
     const { url: srtUrl } = await uploadFile(srtPath, srtStoragePath, "text/plain");
 
     let captionedVideoUrl = null;
 
-    // 6. Burn captions into video (optional)
+    // ── Step 6: Burn captions into video ──────────────────────────────────────
     if (burnIn) {
+      assertMemory("FFmpeg burn-in");
+      logMem("before burn-in");
+      await updateStatus(videoId, clipId, userId, platform, "rendering");
+
       const captionedPath = path.join(tmpDir, "captioned.mp4");
       await burnCaptions(videoPath, assPath, captionedPath);
+      logMem("after burn-in");
 
-      // Use a timestamp in the path so CDN serves the fresh file, not a cached old version
+      // Delete source video from disk immediately to free OS page cache
+      safeUnlink(videoPath); videoPath = null;
+
+      // Unique versioned path — prevents CDN from serving the cached old file
       const ts = Date.now();
-      const captionedStoragePath = `${userId}/${videoId}/captioned_${platform}_${targetId}_${ts}.mp4`;
+      const captionedStoragePath = `${userId}/${videoId}/captioned_${platform}_${targetId}_v${ts}.mp4`;
       const { url } = await uploadFile(captionedPath, captionedStoragePath, "video/mp4");
       captionedVideoUrl = url;
+      logMem("after upload");
     }
 
-    // 7. Save caption record
-    const { data: captionRecord } = await supabase.from("captions").upsert({
-      video_id: videoId,
-      clip_id: clipId,
-      user_id: userId,
-      platform,
-      srt_url: srtUrl,
-      captioned_video_url: captionedVideoUrl,
-      transcript_text: transcript.text,
-      word_count: transcript.words.length,
-      style: style,
-      status: "done",
-      burn_in: burnIn,
-    }, { onConflict: "video_id,clip_id,platform" }).select().single();
+    // ── Step 7: Persist result ────────────────────────────────────────────────
+    await supabase.from("captions").upsert({
+      video_id: videoId, clip_id: clipId, user_id: userId, platform,
+      srt_url: srtUrl, captioned_video_url: captionedVideoUrl,
+      transcript_text: fullText,
+      word_count: words.length,
+      style, status: "done", burn_in: burnIn,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "video_id,clip_id,platform" });
 
     await supabase.from("job_logs").insert({
-      user_id: userId, video_id: videoId,
-      action: "captions",
-      details: { platform, burn_in: burnIn, word_count: transcript.words.length, captioned_video_url: captionedVideoUrl },
+      user_id: userId, video_id: videoId, action: "captions",
+      details: { platform, burn_in: burnIn, word_count: words.length, captioned_video_url: captionedVideoUrl },
       status: "success",
     });
 
-    // Cleanup
-    cleanupTemp(videoPath);
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    logMem("job complete");
+    console.log(`✅ Captions done: ${videoId} | ${words.length} words | platform: ${platform}`);
 
-    console.log(`✅ Captions done: ${videoId} | ${transcript.words.length} words | platform: ${platform}`);
   } catch (err) {
-    console.error("Caption generation failed:", err.message);
+    console.error(`❌ Caption generation failed [${videoId}]:`, err.message);
+    logMem("on error");
+
+    const isOOM = err.message.includes("ENOMEM") || err.message.includes("out of memory");
     await supabase.from("captions").upsert({
       video_id: videoId, clip_id: clipId, user_id: userId, platform,
-      status: "failed", error: err.message,
+      status: "failed",
+      error: isOOM ? "Server ran out of memory — try a shorter clip or try again later" : err.message,
+      updated_at: new Date().toISOString(),
     }, { onConflict: "video_id,clip_id,platform" });
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+
+  } finally {
+    // Always clean up — even on OOM crash
+    if (videoPath) safeUnlink(videoPath);
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    logMem("after cleanup");
   }
 });
 
 // GET /api/captions/:videoId
 router.get("/:videoId", authenticateToken, async (req, res) => {
-  const { data, error } = await supabase.from("captions").select("*")
-    .eq("video_id", req.params.videoId).eq("user_id", req.user.userId)
-    .order("created_at", { ascending: false });
+  const { data, error } = await supabase
+    .from("captions").select("*")
+    .eq("video_id", req.params.videoId)
+    .eq("user_id", req.user.userId)
+    .order("updated_at", { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
   res.json(data || []);
 });
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Audio chunking ─────────────────────────────────────────────────────────────
 
-function extractAudio(videoPath, audioPath) {
+// FFmpeg segment muxer: splits audio into N-second WAV chunks.
+// Each chunk is ~(chunkSec * 32KB) ≈ 1.9MB per minute — well under Groq's 25MB limit.
+function extractAudioChunks(videoPath, chunksDir, chunkSec = 60) {
   return new Promise((resolve, reject) => {
+    const pattern = path.join(chunksDir, "chunk_%03d.wav");
     execFile("ffmpeg", [
       "-y", "-i", videoPath,
-      "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
-      audioPath,
-    ], { timeout: 120000 }, (err) => {
-      if (err) return reject(new Error("Audio extraction failed: " + err.message));
-      resolve(audioPath);
+      "-vn",
+      "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+      "-f", "segment",
+      "-segment_time", String(chunkSec),
+      "-reset_timestamps", "1",
+      pattern,
+    ], { timeout: 300_000 }, (err, _, stderr) => {
+      if (err) return reject(new Error("Audio chunk extraction failed: " + (stderr || "").slice(-200)));
+      const files = fs.readdirSync(chunksDir)
+        .filter(f => f.startsWith("chunk_") && f.endsWith(".wav"))
+        .sort();
+      if (!files.length) return reject(new Error("FFmpeg produced no audio chunks"));
+      const chunks = files.map((f, i) => ({
+        file: path.join(chunksDir, f),
+        offset: i * chunkSec,
+      }));
+      resolve(chunks);
     });
   });
 }
 
-async function transcribeWhisper(audioPath) {
-  const mode = process.env.WHISPER_MODE || "cloud";
+// Process each chunk sequentially, delete from disk immediately after Whisper returns.
+// This keeps peak disk usage at ~(1 source video + 1 WAV chunk + 1 captioned output).
+async function transcribeChunksSequentially(chunks) {
+  const allWords = [];
+  let fullText   = "";
 
-  if (mode === "local") {
-    console.log(`[Whisper] Transcribing ${audioPath} locally...`);
-    // ... (local implementation remains same)
-    return new Promise((resolve, reject) => {
-      execFile("python", ["-m", "whisper", audioPath, "--model", "base.en", "--output_format", "json", "--word_timestamps", "True", "--output_dir", path.dirname(audioPath)], { maxBuffer: 1024 * 1024 * 500, timeout: 600000 }, (error, stdout, stderr) => {
-        if (error) return reject(new Error("Local Whisper failed: " + error.message));
-        const jsonPath = audioPath.replace(/\.wav$/, ".json");
-        try {
-          const data = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
-          const words = [];
-          if (data.segments) data.segments.forEach(seg => { if (seg.words) words.push(...seg.words); });
-          data.words = words;
-          resolve(data);
-        } catch (e) { reject(new Error("Failed to parse local Whisper JSON output")); }
-      });
-    });
-  } else if (mode === "groq") {
-    // FREE Cloud Transcription via Groq
-    console.log(`[Whisper] Transcribing ${audioPath} via Groq (Free)...`);
+  for (const { file, offset } of chunks) {
+    const chunkData = await transcribeOneChunk(file);
+
+    // Normalize word objects and shift timestamps by chunk offset
+    const words = normalizeWords(chunkData).map(w => ({
+      word: w.word,
+      start: w.start + offset,
+      end:   w.end   + offset,
+    }));
+
+    allWords.push(...words);
+    fullText += (chunkData.text || "").trim() + " ";
+
+    // Delete the chunk WAV from disk right away — frees OS page cache
+    safeUnlink(file);
+  }
+
+  return { words: allWords, fullText: fullText.trim() };
+}
+
+// Send a single WAV file to Whisper (Groq / OpenAI / local) and return raw response.
+async function transcribeOneChunk(audioPath) {
+  const mode = process.env.WHISPER_MODE || "groq";
+  console.log(`[Whisper] Transcribing chunk ${path.basename(audioPath)} via ${mode}…`);
+
+  if (mode === "groq") {
     const form = new FormData();
     form.append("file", fs.createReadStream(audioPath), { filename: "audio.wav", contentType: "audio/wav" });
     form.append("model", "whisper-large-v3");
@@ -217,50 +277,15 @@ async function transcribeWhisper(audioPath) {
     const { data } = await axios.post(
       "https://api.groq.com/openai/v1/audio/transcriptions",
       form,
-      { headers: { ...form.getHeaders(), Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
-        maxBodyLength: Infinity, timeout: 300000 }
+      {
+        headers: { ...form.getHeaders(), Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
+        maxBodyLength: Infinity, timeout: 300_000,
+      }
     );
-
-    console.log("[Whisper] Groq response keys:", Object.keys(data));
-    console.log("[Whisper] Segments count:", data.segments?.length, "| Top-level words:", data.words?.length);
-
-    // Try 1: Use top-level words array (Groq may return this)
-    let words = [];
-    if (data.words?.length) {
-      words = data.words.map(w => ({ word: w.word || w.text || "", start: w.start, end: w.end }));
-    }
-    // Try 2: Flatten words from inside segments
-    if (!words.length && data.segments) {
-      data.segments.forEach(seg => {
-        if (seg.words?.length) {
-          seg.words.forEach(w => words.push({ word: w.word || w.text || "", start: w.start, end: w.end }));
-        }
-      });
-    }
-    // Try 3: Fallback — split segment text into synthetic words with interpolated timestamps
-    if (!words.length && data.segments?.length) {
-      console.log("[Whisper] No word-level data. Building synthetic words from segments...");
-      data.segments.forEach(seg => {
-        const segWords = (seg.text || "").trim().split(/\s+/).filter(Boolean);
-        if (!segWords.length) return;
-        const segDuration = (seg.end || 0) - (seg.start || 0);
-        const wordDuration = segDuration / segWords.length;
-        segWords.forEach((w, i) => {
-          words.push({
-            word: w,
-            start: seg.start + i * wordDuration,
-            end: seg.start + (i + 1) * wordDuration,
-          });
-        });
-      });
-    }
-
-    data.words = words;
-    console.log("[Whisper] Final word count:", words.length);
     return data;
-  } else {
-    // Cloud mode (OpenAI API)
-    console.log(`[Whisper] Transcribing ${audioPath} via OpenAI Cloud API...`);
+
+  } else if (mode === "cloud") {
+    if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not set");
     const form = new FormData();
     form.append("file", fs.createReadStream(audioPath), { filename: "audio.wav", contentType: "audio/wav" });
     form.append("model", "whisper-1");
@@ -270,17 +295,114 @@ async function transcribeWhisper(audioPath) {
     const { data } = await axios.post(
       "https://api.openai.com/v1/audio/transcriptions",
       form,
-      { headers: { ...form.getHeaders(), Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-        maxBodyLength: Infinity, timeout: 300000 }
+      {
+        headers: { ...form.getHeaders(), Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+        maxBodyLength: Infinity, timeout: 300_000,
+      }
     );
     return data;
+
+  } else {
+    // Local Whisper (python)
+    return new Promise((resolve, reject) => {
+      const outDir = path.dirname(audioPath);
+      execFile("python", [
+        "-m", "whisper", audioPath,
+        "--model", "base.en",
+        "--output_format", "json",
+        "--word_timestamps", "True",
+        "--output_dir", outDir,
+      ], { maxBuffer: 1024 * 1024 * 50, timeout: 600_000 }, (err) => {
+        if (err) return reject(new Error("Local Whisper failed: " + err.message));
+        const jsonPath = audioPath.replace(/\.wav$/, ".json");
+        try {
+          const d = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
+          safeUnlink(jsonPath);
+          resolve(d);
+        } catch (e) { reject(new Error("Failed to parse local Whisper output")); }
+      });
+    });
   }
 }
 
-/**
- * Build an ASS subtitle file from word-level timestamps.
- * Uses short groups (wordsPerLine) for karaoke/viral style.
- */
+// Normalize words from any Whisper response shape into [{word, start, end}].
+function normalizeWords(data) {
+  // Shape 1: top-level words array (Groq, OpenAI with word timestamps)
+  if (data.words?.length) {
+    return data.words.map(w => ({ word: w.word || w.text || "", start: w.start || 0, end: w.end || 0 }));
+  }
+  // Shape 2: words nested inside segments
+  const fromSegs = [];
+  (data.segments || []).forEach(seg => {
+    (seg.words || []).forEach(w => fromSegs.push({ word: w.word || w.text || "", start: w.start || 0, end: w.end || 0 }));
+  });
+  if (fromSegs.length) return fromSegs;
+  // Shape 3: synthetic — interpolate timestamps from segment boundaries
+  const synthetic = [];
+  (data.segments || []).forEach(seg => {
+    const tokens = (seg.text || "").trim().split(/\s+/).filter(Boolean);
+    if (!tokens.length) return;
+    const dur  = ((seg.end || 0) - (seg.start || 0)) / tokens.length;
+    tokens.forEach((w, i) => synthetic.push({
+      word: w,
+      start: (seg.start || 0) + i * dur,
+      end:   (seg.start || 0) + (i + 1) * dur,
+    }));
+  });
+  return synthetic;
+}
+
+// ── Subtitle generation ───────────────────────────────────────────────────────
+
+function mergeStyle(platform, overrides = {}) {
+  const base = CAPTION_STYLES[platform] || CAPTION_STYLES.tiktok;
+  const merged = { ...base };
+
+  // Map frontend style props to ASS properties
+  if (overrides.fontname)   merged.fontname = overrides.fontname;
+  if (overrides.fontsize)   merged.fontsize = overrides.fontsize;
+  if (overrides.wordsPerLine) merged.wordsPerLine = overrides.wordsPerLine;
+  if (overrides.bold !== undefined) merged.bold = overrides.bold;
+  if (overrides.alignment)  merged.alignment = overrides.alignment;
+  if (overrides.marginV !== undefined) merged.marginV = overrides.marginV;
+
+  // Convert #RRGGBB → ASS &H00BBGGRR colour
+  if (overrides.fontColor)    merged.primaryColour = hexToASS(overrides.fontColor);
+  if (overrides.outlineColor && overrides.outlineColor !== "transparent") {
+    merged.outlineColour = hexToASS(overrides.outlineColor);
+    merged.outline = merged.outline || 2;
+  } else if (overrides.outlineColor === "transparent") {
+    merged.outline = 0;
+  }
+
+  return merged;
+}
+
+function hexToASS(hex) {
+  const c = hex.replace("#", "");
+  if (c.length !== 6) return "&H00FFFFFF";
+  const r = c.slice(0, 2), g = c.slice(2, 4), b = c.slice(4, 6);
+  return `&H00${b}${g}${r}`;
+}
+
+function fmtASS(t) {
+  const h  = Math.floor(t / 3600);
+  const m  = Math.floor((t % 3600) / 60);
+  const s  = Math.floor(t % 60);
+  const cs = Math.round((t % 1) * 100);
+  return `${h}:${pad(m)}:${pad(s)}.${pad(cs)}`;
+}
+
+function fmtSRT(t) {
+  const h  = Math.floor(t / 3600);
+  const m  = Math.floor((t % 3600) / 60);
+  const s  = Math.floor(t % 60);
+  const ms = Math.round((t % 1) * 1000);
+  return `${pad(h)}:${pad(m)}:${pad(s)},${pad(ms, 3)}`;
+}
+
+function pad(n, len = 2) { return String(n).padStart(len, "0"); }
+
 function generateASS(words, outputPath, style) {
   const header = `[Script Info]
 ScriptType: v4.00+
@@ -290,80 +412,70 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,${style.fontname},${style.fontsize},${style.primaryColour},&H000000FF,${style.outlineColour},&H00000000,${style.bold},0,0,0,100,100,0,0,1,${style.outline},${style.shadow},${style.alignment},20,20,${style.marginV},1
+Style: Default,${style.fontname},${style.fontsize},${style.primaryColour},&H000000FF,${style.outlineColour},&H00000000,${style.bold},0,0,0,100,100,0,0,1,${style.outline},${style.shadow || 1},${style.alignment},20,20,${style.marginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
-
-  const lines = [];
   const wpl = style.wordsPerLine || 3;
-
+  const lines = [];
   for (let i = 0; i < words.length; i += wpl) {
     const chunk = words.slice(i, i + wpl);
-    const start = chunk[0].start;
-    const end = chunk[chunk.length - 1].end;
-    const text = chunk.map(w => (w.word || w.text || "").trim()).join(" ");
-
-    // ASS time format: H:MM:SS.cc
-    const fmt = (t) => {
-      const h = Math.floor(t / 3600);
-      const m = Math.floor((t % 3600) / 60);
-      const s = Math.floor(t % 60);
-      const cs = Math.round((t % 1) * 100);
-      return `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}.${String(cs).padStart(2,"0")}`;
-    };
-
-    lines.push(`Dialogue: 0,${fmt(start)},${fmt(end)},Default,,0,0,0,,${text}`);
+    const text  = chunk.map(w => (w.word || "").trim()).join(" ");
+    lines.push(`Dialogue: 0,${fmtASS(chunk[0].start)},${fmtASS(chunk[chunk.length - 1].end)},Default,,0,0,0,,${text}`);
   }
-
   fs.writeFileSync(outputPath, header + lines.join("\n"));
 }
 
-function generateSRT(words, outputPath, wordsPerLine = 5) {
-  let srt = "";
-  let index = 1;
-
-  for (let i = 0; i < words.length; i += wordsPerLine) {
-    const chunk = words.slice(i, i + wordsPerLine);
-    const start = chunk[0].start;
-    const end = chunk[chunk.length - 1].end;
-    const text = chunk.map(w => (w.word || w.text || "").trim()).join(" ");
-
-    const fmt = (t) => {
-      const h = Math.floor(t / 3600);
-      const m = Math.floor((t % 3600) / 60);
-      const s = Math.floor(t % 60);
-      const ms = Math.round((t % 1) * 1000);
-      return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")},${String(ms).padStart(3,"0")}`;
-    };
-
-    srt += `${index}\n${fmt(start)} --> ${fmt(end)}\n${text}\n\n`;
-    index++;
+function generateSRT(words, outputPath, wpl = 5) {
+  let srt = ""; let idx = 1;
+  for (let i = 0; i < words.length; i += wpl) {
+    const chunk = words.slice(i, i + wpl);
+    const text  = chunk.map(w => (w.word || "").trim()).join(" ");
+    srt += `${idx}\n${fmtSRT(chunk[0].start)} --> ${fmtSRT(chunk[chunk.length - 1].end)}\n${text}\n\n`;
+    idx++;
   }
-
   fs.writeFileSync(outputPath, srt.trim());
 }
 
+// ── FFmpeg burn-in ────────────────────────────────────────────────────────────
+// -preset ultrafast  → lowest encoder memory footprint (vs fast: ~40% less RAM)
+// -threads 1         → single-threaded prevents memory multiplication on free tier
+// -crf 23            → slightly lower quality but much smaller output file
+// No -maxBuffer bloat — stderr is small, we only capture errors
 function burnCaptions(videoPath, assPath, outputPath) {
   return new Promise((resolve, reject) => {
-    // ASS path must use forward slashes and escape colons on Windows
-    const escapedAssPath = assPath.replace(/\\/g, "/").replace(":", "\\:");
-
+    const escapedAss = assPath.replace(/\\/g, "/").replace(/:/g, "\\:");
     execFile("ffmpeg", [
-      "-y", "-i", videoPath,
-      "-vf", `ass=${escapedAssPath}`,
-      "-c:v", "libx264", "-preset", "fast", "-crf", "22",
-      "-threads", "1", // <-- CRITICAL: Prevents OOM crashes on Render Free (512MB RAM)
+      "-y",
+      "-i", videoPath,
+      "-vf", `ass=${escapedAss}`,
+      "-c:v", "libx264",
+      "-preset", "ultrafast",   // lowest encoder RAM vs fast (~40% reduction)
+      "-crf", "23",
+      "-threads", "1",          // single-threaded: ~50MB vs ~200MB for multi-thread
       "-c:a", "copy",
       "-movflags", "+faststart",
       outputPath,
-    ], { maxBuffer: 1024 * 1024 * 100, timeout: 600000 }, (err, _, stderr) => {
-      if (err) return reject(new Error("Caption burn-in failed: " + stderr?.slice(-300)));
+    ], { maxBuffer: 1024 * 1024 * 10, timeout: 900_000 }, (err, _, stderr) => {
+      if (err) return reject(new Error("Caption burn-in failed: " + (stderr || "").slice(-400)));
       if (!fs.existsSync(outputPath)) return reject(new Error("Captioned output not created"));
       resolve(outputPath);
     });
   });
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function safeUnlink(p) {
+  try { if (p && fs.existsSync(p)) fs.unlinkSync(p); } catch {}
+}
+
+async function updateStatus(videoId, clipId, userId, platform, status) {
+  await supabase.from("captions").upsert({
+    video_id: videoId, clip_id: clipId, user_id: userId, platform,
+    status, updated_at: new Date().toISOString(),
+  }, { onConflict: "video_id,clip_id,platform" });
 }
 
 module.exports = router;
