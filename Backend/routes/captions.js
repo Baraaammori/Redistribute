@@ -220,7 +220,13 @@ async function transcribeWhisper(audioPath) {
     // We flatten segments to ensure our ASS generator works.
     const words = [];
     if (data.segments) data.segments.forEach(seg => { if (seg.words) words.push(...seg.words); });
-    data.words = words.length > 0 ? words : (data.segments || []); 
+    // Normalize: Groq uses 'text', OpenAI uses 'word'
+    const normalized = (words.length > 0 ? words : []).map(w => ({
+      word: w.word || w.text || "",
+      start: w.start,
+      end: w.end,
+    }));
+    data.words = normalized;
     return data;
   } else {
     // Cloud mode (OpenAI API)
@@ -267,7 +273,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     const chunk = words.slice(i, i + wpl);
     const start = chunk[0].start;
     const end = chunk[chunk.length - 1].end;
-    const text = chunk.map(w => w.word.trim()).join(" ");
+    const text = chunk.map(w => (w.word || w.text || "").trim()).join(" ");
 
     // ASS time format: H:MM:SS.cc
     const fmt = (t) => {
@@ -292,7 +298,7 @@ function generateSRT(words, outputPath, wordsPerLine = 5) {
     const chunk = words.slice(i, i + wordsPerLine);
     const start = chunk[0].start;
     const end = chunk[chunk.length - 1].end;
-    const text = chunk.map(w => w.word.trim()).join(" ");
+    const text = chunk.map(w => (w.word || w.text || "").trim()).join(" ");
 
     const fmt = (t) => {
       const h = Math.floor(t / 3600);
