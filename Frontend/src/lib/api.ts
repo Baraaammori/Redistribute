@@ -84,7 +84,37 @@ export const api = {
     portal:   () => request<{ url: string }>("/api/stripe/portal", { method: "POST" }),
   },
 
-  // ── NEW: Upload system ────────────────────────────────────────────────────
+  // ── Caption Studio ────────────────────────────────────────────────────────
+  captions: {
+    generate: (videoId: string, body: any) =>
+      request<any>(`/api/captions/${videoId}/generate`, { method: "POST", body: JSON.stringify(body) }),
+    list: (videoId: string) =>
+      request<any[]>(`/api/captions/${videoId}`),
+  },
+
+  // ── Best Time to Post ──────────────────────────────────────────────────────
+  bestTime: {
+    get: (timezone?: string) =>
+      request<any>(`/api/best-time${timezone ? `?timezone=${encodeURIComponent(timezone)}` : ""}`),
+  },
+
+  // ── B-Roll Editor ─────────────────────────────────────────────────────────
+  broll: {
+    analyze:     (videoId: string) =>
+      request<any>(`/api/broll/${videoId}/analyze`, { method: "POST" }),
+    getSegments: (videoId: string) =>
+      request<any[]>(`/api/broll/${videoId}/segments`),
+    apply:       (videoId: string, body: { keywords?: string[]; segment_ids?: string[] }) =>
+      request<any>(`/api/broll/${videoId}/apply`, { method: "POST", body: JSON.stringify(body) }),
+  },
+
+  // ── AI Clipping ───────────────────────────────────────────────────────────
+  aiClip: {
+    generate: (videoId: string, body?: { clip_count?: number; clip_duration?: number }) =>
+      request<any>(`/api/ai-clip/${videoId}/generate`, { method: "POST", body: JSON.stringify(body || {}) }),
+  },
+
+  // ── Upload system ─────────────────────────────────────────────────────────
   upload: {
     /** Upload a video file with metadata */
     create: (file: File, meta: { title: string; description?: string; tags?: string; mode?: string }) => {

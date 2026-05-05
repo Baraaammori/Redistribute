@@ -3,6 +3,43 @@ import { useNavigate } from "react-router-dom";
 import { Upload, Film, Sparkles, Settings2, Sliders, ArrowRight, Loader2, CheckCircle, X } from "lucide-react";
 import { api } from "../../lib/api";
 
+// ── XHR upload with real progress ────────────────────────────────────────────
+const BASE = process.env.REACT_APP_API_URL || "http://localhost:5000";
+
+function uploadWithProgress(
+  file: File,
+  meta: { title: string; description?: string; tags?: string; mode?: string },
+  onProgress: (pct: number) => void,
+): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const fd = new FormData();
+    fd.append("video", file);
+    fd.append("title", meta.title);
+    if (meta.description) fd.append("description", meta.description);
+    if (meta.tags) fd.append("tags", meta.tags);
+    if (meta.mode) fd.append("mode", meta.mode);
+
+    const xhr = new XMLHttpRequest();
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 90));
+    };
+    xhr.onload = () => {
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+        else reject(new Error(data.error || "Upload failed"));
+      } catch {
+        reject(new Error("Upload failed"));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Network error during upload"));
+    xhr.open("POST", `${BASE}/api/upload`);
+    const token = localStorage.getItem("authToken");
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.send(fd);
+  });
+}
+
 // ── Mode descriptions ─────────────────────────────────────────────────────────
 const modes = [
   {
@@ -84,22 +121,14 @@ export default function UploadCenter() {
 
     setUploading(true);
     setError("");
-    setUploadProgress(10);
+    setUploadProgress(0);
 
     try {
-      // Simulate progress since fetch doesn't support progress natively
-      const progressTimer = setInterval(() => {
-        setUploadProgress(prev => Math.min(prev + 5, 85));
-      }, 500);
-
-      const result = await api.upload.create(file, {
-        title: title.trim(),
-        description: description.trim() || undefined,
-        tags: tags.trim() || undefined,
-        mode,
-      });
-
-      clearInterval(progressTimer);
+      const result = await uploadWithProgress(
+        file,
+        { title: title.trim(), description: description.trim(), tags: tags.trim(), mode },
+        setUploadProgress,
+      );
       setUploadProgress(100);
       setUploadedVideo(result);
     } catch (err: any) {

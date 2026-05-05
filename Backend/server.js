@@ -26,20 +26,29 @@ app.use("/api/stripe/webhook", express.raw({ type: "application/json" }));
 app.use(express.json());
 
 // ── ROUTES ────────────────────────────────────────────────────────────────────
-app.use("/api/auth",     require("./routes/auth"));
-app.use("/api/admin",    require("./routes/admin"));
-app.use("/api/shop",     require("./routes/shop"));
-app.use("/api/accounts", require("./routes/accounts"));
-app.use("/api/videos",   require("./routes/videos"));
-app.use("/api/reposts",  require("./routes/reposts"));
-app.use("/api/stripe",   require("./routes/stripe"));
-app.use("/api/upload",   require("./routes/upload"));
+app.use("/api/auth",      require("./routes/auth"));
+app.use("/api/admin",     require("./routes/admin"));
+app.use("/api/shop",      require("./routes/shop"));
+app.use("/api/accounts",  require("./routes/accounts"));
+app.use("/api/videos",    require("./routes/videos"));
+app.use("/api/reposts",   require("./routes/reposts"));
+app.use("/api/stripe",    require("./routes/stripe"));
+app.use("/api/upload",    require("./routes/upload"));
+app.use("/api/ai-clip",   require("./routes/ai-clip"));
+app.use("/api/captions",  require("./routes/captions"));
+app.use("/api/best-time", require("./routes/besttime"));
+app.use("/api/broll",     require("./routes/broll"));
+app.use("/api/settings",  require("./routes/settings"));
 
 // ── DISTRIBUTION WORKER (processes upload → platform jobs) ────────────────────
 require("./lib/distributionWorker");
 
+// ── ANALYTICS POLLER + MONTHLY RESET ─────────────────────────────────────────
+const { startAnalyticsPoller } = require("./lib/analyticsPoller");
+startAnalyticsPoller();
+
 // ── HEALTH ────────────────────────────────────────────────────────────────────
-app.get("/api/health", (req, res) => res.json({ status: "ok", ts: new Date() }));
+app.get("/api/health", (_req, res) => res.json({ status: "ok", ts: new Date() }));
 
 // ── START ─────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;

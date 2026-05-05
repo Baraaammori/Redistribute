@@ -1,11 +1,16 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Routes, Route, Link, useLocation, useNavigate } from "react-router-dom";
-import { LayoutDashboard, RefreshCw, Clock, Link2, CreditCard, Settings, LogOut, Plus, Trash2, RotateCcw, ExternalLink, Upload, Film } from "lucide-react";
+import { LayoutDashboard, Clock, Link2, CreditCard, LogOut, Plus, Trash2, RotateCcw, Upload, Film, Type, Layers, Settings2 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { api } from "../../lib/api";
 import UploadCenter from "./UploadCenter";
 import VideoLibrary from "./VideoLibrary";
+import CaptionStudio from "./CaptionStudio";
+import BrollEditor from "./BrollEditor";
+import SettingsPage from "./Settings";
 import NewRepost, { StatusPill } from "./NewRepost";
+import { BestTimeWidget } from "../../components/BestTimeWidget";
+import { TikTokErrorBanner } from "../../components/TikTokErrorBanner";
 
 // ── SIDEBAR ────────────────────────────────────────────────────────────────────
 function Sidebar() {
@@ -13,13 +18,16 @@ function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const links = [
-    { to:"/dashboard",          icon:<LayoutDashboard size={16}/>, label:"Overview" },
-    { to:"/dashboard/upload",   icon:<Upload size={16}/>,          label:"Upload", highlight: true },
-    { to:"/dashboard/library",  icon:<Film size={16}/>,            label:"Library" },
-    { to:"/dashboard/repost",   icon:<Plus size={16}/>,            label:"Repost" },
-    { to:"/dashboard/queue",    icon:<Clock size={16}/>,           label:"Queue" },
-    { to:"/dashboard/accounts", icon:<Link2 size={16}/>,           label:"Accounts" },
-    { to:"/dashboard/billing",  icon:<CreditCard size={16}/>,      label:"Billing" },
+    { to:"/dashboard",            icon:<LayoutDashboard size={16}/>, label:"Overview" },
+    { to:"/dashboard/upload",     icon:<Upload size={16}/>,          label:"Upload", highlight: true },
+    { to:"/dashboard/library",    icon:<Film size={16}/>,            label:"Library" },
+    { to:"/dashboard/captions",   icon:<Type size={16}/>,            label:"Captions" },
+    { to:"/dashboard/broll",      icon:<Layers size={16}/>,          label:"B-Roll" },
+    { to:"/dashboard/repost",     icon:<Plus size={16}/>,            label:"Repost" },
+    { to:"/dashboard/queue",      icon:<Clock size={16}/>,           label:"Queue" },
+    { to:"/dashboard/accounts",   icon:<Link2 size={16}/>,           label:"Accounts" },
+    { to:"/dashboard/billing",    icon:<CreditCard size={16}/>,      label:"Billing" },
+    { to:"/dashboard/settings",   icon:<Settings2 size={16}/>,       label:"Settings" },
   ];
   return (
     <div style={{ width:220, background:"#0A0A0F", minHeight:"100vh", display:"flex", flexDirection:"column", padding:"28px 0", flexShrink:0, borderRight:"1px solid rgba(255,255,255,0.06)", position:"sticky", top:0 }}>
@@ -103,6 +111,9 @@ function Overview() {
           </div>
         ))}
       </div>
+
+      {/* Best Time to Post */}
+      <BestTimeWidget />
 
       {/* Recent uploads */}
       <div style={{ background:"#111118", border:"1px solid rgba(255,255,255,0.06)", borderRadius:16, padding:"24px 28px", marginBottom:20 }}>
@@ -194,7 +205,8 @@ function Queue() {
                 <div style={{ fontSize:11, color:"rgba(255,255,255,0.25)", marginTop:3 }}>
                   → {r.destinations?.join(", ")} · {r.scheduled_for ? `Scheduled: ${new Date(r.scheduled_for).toLocaleString()}` : new Date(r.created_at).toLocaleString()}
                 </div>
-                {r.error && <div style={{ fontSize:11, color:"#EF4444", marginTop:3 }}>{r.error}</div>}
+                {r.error && !r.error_code && <div style={{ fontSize:11, color:"#EF4444", marginTop:3 }}>{r.error}</div>}
+                {r.error_code && <TikTokErrorBanner errorCode={r.error_code} errorMessage={r.error} onRetry={() => doRetry(r.id)} />}
               </div>
               <StatusPill status={r.status}/>
               <div style={{ display:"flex", gap:6 }}>
@@ -322,13 +334,16 @@ export default function Dashboard() {
       <Sidebar />
       <div style={{ flex:1 }}>
         <Routes>
-          <Route index        element={<Overview />} />
-          <Route path="upload"   element={<UploadCenter />} />
-          <Route path="library"  element={<VideoLibrary />} />
-          <Route path="repost"   element={<NewRepost />} />
-          <Route path="queue"    element={<Queue />} />
-          <Route path="accounts" element={<Accounts />} />
-          <Route path="billing"  element={<Billing />} />
+          <Route index              element={<Overview />} />
+          <Route path="upload"      element={<UploadCenter />} />
+          <Route path="library"     element={<VideoLibrary />} />
+          <Route path="captions"    element={<CaptionStudio />} />
+          <Route path="broll"       element={<BrollEditor />} />
+          <Route path="repost"      element={<NewRepost />} />
+          <Route path="queue"       element={<Queue />} />
+          <Route path="accounts"    element={<Accounts />} />
+          <Route path="billing"     element={<Billing />} />
+          <Route path="settings"    element={<SettingsPage />} />
         </Routes>
       </div>
     </div>

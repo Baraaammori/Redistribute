@@ -1,6 +1,7 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { api } from "../../lib/api";
+import { SchedulePicker } from "../../components/SchedulePicker";
 
 function StatusPill({ status }: { status: string }) {
   const map: Record<string,{bg:string,color:string,label:string}> = {
@@ -223,22 +224,12 @@ export default function NewRepost() {
       {step === 3 && (
         <div>
           <div style={{ fontSize:15, color:"rgba(255,255,255,0.6)", marginBottom:20, fontWeight:300 }}>When should this repost go out?</div>
-          <div style={{ display:"flex", flexDirection:"column", gap:12, marginBottom:28 }}>
-            <label style={{ display:"flex", alignItems:"center", gap:12, padding:"16px 18px", background: !schedule?"rgba(124,92,252,0.1)":"#111118", border:`1px solid ${!schedule?"#7C5CFC":"rgba(255,255,255,0.07)"}`, borderRadius:12, cursor:"pointer" }} onClick={()=>setSchedule("")}>
-              <input type="radio" checked={!schedule} onChange={()=>setSchedule("")} style={{ accentColor:"#7C5CFC" }}/>
-              <div>
-                <div style={{ color:"rgba(255,255,255,0.8)", fontSize:14, fontWeight:500 }}>Post immediately</div>
-                <div style={{ color:"rgba(255,255,255,0.3)", fontSize:12, fontWeight:300 }}>Added to the queue now</div>
-              </div>
-            </label>
-            <label style={{ display:"flex", alignItems:"flex-start", gap:12, padding:"16px 18px", background: schedule?"rgba(124,92,252,0.1)":"#111118", border:`1px solid ${schedule?"#7C5CFC":"rgba(255,255,255,0.07)"}`, borderRadius:12 }}>
-              <input type="radio" checked={!!schedule} onChange={()=>setSchedule(new Date(Date.now()+3600000).toISOString().slice(0,16))} style={{ accentColor:"#7C5CFC", marginTop:3 }}/>
-              <div style={{ flex:1 }}>
-                <div style={{ color:"rgba(255,255,255,0.8)", fontSize:14, fontWeight:500, marginBottom:8 }}>Schedule for later</div>
-                {schedule && <input type="datetime-local" value={schedule} onChange={e=>setSchedule(e.target.value)}
-                  style={{ background:"rgba(0,0,0,0.3)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:8, padding:"8px 12px", color:"white", fontFamily:"'DM Sans',sans-serif", fontSize:13, outline:"none" }}/>}
-              </div>
-            </label>
+          <div style={{ marginBottom:24 }}>
+            <SchedulePicker
+              value={schedule || undefined}
+              onChange={(iso) => setSchedule(iso || "")}
+              label="Schedule for later"
+            />
           </div>
           <div style={{ display:"flex", gap:10 }}>
             <button onClick={()=>setStep(2)} style={{ padding:"10px 20px", background:"transparent", border:"1px solid rgba(255,255,255,0.1)", borderRadius:100, color:"rgba(255,255,255,0.4)", cursor:"pointer", fontSize:14, fontFamily:"'DM Sans',sans-serif" }}>← Back</button>

@@ -222,4 +222,48 @@ function transcodeToMP4(inputPath, outputPath) {
   });
 }
 
-module.exports = { analyzeVideo, cutClip, generateClips, generateThumbnail, simplifyRatio, transcodeToMP4 };
+/**
+ * Stamp a watermark image onto a video.
+ * @param {string} inputPath  - source video
+ * @param {string} watermarkPath - PNG/SVG watermark image
+ * @param {string} outputPath - output video
+ * @param {{ position?: string, opacity?: number, scale?: number }} opts
+ *   position: "top-left" | "top-right" | "bottom-left" | "bottom-right" (default)
+ */
+function applyWatermark(inputPath, watermarkPath, outputPath, opts = {}) {
+  const { position = "bottom-right", opacity = 0.8, scale = 0.12 } = opts;
+
+  const overlayMap = {
+    "top-left":     "10:10",
+    "top-right":    "W-w-10:10",
+    "bottom-left":  "10:H-h-10",
+    "bottom-right": "W-w-10:H-h-10",
+  };
+  const overlayXY = overlayMap[position] || overlayMap["bottom-right"];
+
+  // Scale watermark to `scale` fraction of video width, then overlay with opacity
+  const vf = [
+    `[1:v]scale=iw*${scale}:-1,format=rgba,colorchannelmixer=aa=${opacity}[wm]`,
+    `[0:v][wm]overlay=${overlayXY}:format=auto`,
+  ].join(";");
+
+  return new Promise((resolve, reject) => {
+    execFile("ffmpeg", [
+      "-y",
+      "-i", inputPath,
+      "-i", watermarkPath,
+      "-filter_complex", vf,
+      "-c:v", "libx264",
+      "-preset", "fast",
+      "-crf", "22",
+      "-c:a", "copy",
+      "-movflags", "+faststart",
+      outputPath,
+    ], { maxBuffer: 1024 * 1024 * 100, timeout: 300_000 }, (err) => {
+      if (err) return reject(new Error(`Watermark failed: ${err.message}`));
+      resolve(outputPath);
+    });
+  });
+}
+
+module.exports = { analyzeVideo, cutClip, generateClips, generateThumbnail, simplifyRatio, transcodeToMP4, applyWatermark };
