@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Film, Search, Zap, CheckCircle, Loader2, AlertCircle, X, RefreshCw } from "lucide-react";
 import { api } from "../../lib/api";
+import VideoPlayer from "../../components/VideoPlayer";
 
 const inputStyle: React.CSSProperties = {
   background: "#0A0A0F", border: "1px solid rgba(255,255,255,0.08)",
@@ -148,6 +149,14 @@ export default function BrollEditor() {
           </div>
         )}
       </div>
+
+      {/* Source Video Preview */}
+      {selectedVideo?.file_url && (
+        <div style={{ ...({ background: "#111118", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 16, padding: 20, marginBottom: 16 }) }}>
+          <label style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", display: "block", marginBottom: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: 1 }}>Source Video</label>
+          <VideoPlayer src={selectedVideo.file_url} title={selectedVideo.title} maxHeight={350} />
+        </div>
+      )}
 
       {/* Step 1 — Detect gaps */}
       <div style={{ background: "#111118", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 16, padding: 20, marginBottom: 16 }}>
@@ -315,11 +324,13 @@ export default function BrollEditor() {
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 14 }}>
             {resultClip.ai_reason}
           </div>
+          {/* B-Roll Result Video Player */}
+          {(resultClip.file_url || resultClip.public_url) && (
+            <div style={{ marginBottom: 14 }}>
+              <VideoPlayer src={resultClip.file_url || resultClip.public_url} title="With B-Roll" maxHeight={400} />
+            </div>
+          )}
           <div style={{ display: "flex", gap: 10 }}>
-            <a href={resultClip.file_url} target="_blank" rel="noreferrer"
-              style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 18px", background: "#7C5CFC", color: "white", borderRadius: 100, fontSize: 13, fontWeight: 600, textDecoration: "none" }}>
-              ▶ Preview
-            </a>
             <button onClick={handleAnalyze}
               style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 18px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.5)", borderRadius: 100, fontSize: 13, cursor: "pointer" }}>
               <RefreshCw size={13} /> Redo
