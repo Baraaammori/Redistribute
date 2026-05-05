@@ -45,26 +45,95 @@ router.post("/webhook", async (req, res) => {
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
   } catch (err) {
-    console.error("Stripe webhook error:", err.message);
+    console.error("Stripe webhook signature error:", err.message);
     return res.status(400).send(`Webhook error: ${err.message}`);
   }
 
+  // Idempotency: skip if already processed
+  const { data: existing } = await supabase.from("stripe_events")
+    .select("id").eq("event_id", event.id).single();
+  if (existing) return res.json({ received: true, skipped: true });
+
   const obj = event.data.object;
 
-  if (event.type === "checkout.session.completed") {
-    const customer = await stripe.customers.retrieve(obj.customer);
-    await supabase.from("users").update({ plan: "pro", stripe_sub_id: obj.subscription })
-      .eq("id", customer.metadata.userId);
-  }
+  try {
+    switch (event.type) {
+      case "checkout.session.completed": {
+        // Trial started or payment completed → upgrade to pro
+        if (obj.mode === "subscription") {
+          const customer = await stripe.customers.retrieve(obj.customer);
+          const userId = customer.metadata?.userId;
+          if (userId) {
+            await supabase.from("users")
+              .update({ plan: "pro", stripe_sub_id: obj.subscription, stripe_customer_id: obj.customer })
+              .eq("id", userId);
+            console.log(`✅ Stripe: user ${userId} upgraded to pro`);
+          }
+        }
+        break;
+      }
 
-  if (event.type === "customer.subscription.deleted") {
-    await supabase.from("users").update({ plan: "free", stripe_sub_id: null })
-      .eq("stripe_sub_id", obj.id);
-  }
+      case "customer.subscription.updated": {
+        // Handles: trial → active, active → past_due, cancellation-at-period-end
+        const isActive = ["active", "trialing"].includes(obj.status);
+        const plan = isActive ? "pro" : "free";
+        await supabase.from("users")
+          .update({ plan, stripe_sub_id: isActive ? obj.id : null })
+          .eq("stripe_sub_id", obj.id);
+        console.log(`ℹ️ Stripe: subscription ${obj.id} → status=${obj.status}, plan=${plan}`);
+        break;
+      }
 
-  if (event.type === "customer.subscription.updated") {
-    const plan = obj.status === "active" ? "pro" : "free";
-    await supabase.from("users").update({ plan }).eq("stripe_sub_id", obj.id);
+      case "customer.subscription.deleted": {
+        // Subscription fully cancelled → downgrade immediately
+        await supabase.from("users")
+          .update({ plan: "free", stripe_sub_id: null })
+          .eq("stripe_sub_id", obj.id);
+        console.log(`⬇️ Stripe: subscription ${obj.id} deleted → user downgraded to free`);
+        break;
+      }
+
+      case "invoice.payment_succeeded": {
+        // Successful renewal — ensure plan stays pro
+        if (obj.subscription) {
+          await supabase.from("users")
+            .update({ plan: "pro" })
+            .eq("stripe_sub_id", obj.subscription);
+        }
+        break;
+      }
+
+      case "invoice.payment_failed": {
+        // Subscription renewal failed — keep pro for grace period (Stripe retries 4x over 8 days)
+        // Log for follow-up; Stripe will send customer.subscription.updated when it finally fails
+        console.warn(`⚠️ Stripe: invoice payment failed for subscription ${obj.subscription}`);
+        await supabase.from("stripe_events").insert({
+          event_id: `prefail_${obj.id}`,
+          type: event.type,
+          data: { subscription: obj.subscription, amount: obj.amount_due },
+          processed_at: new Date().toISOString(),
+        }).select().single().catch(() => {}); // non-fatal
+        break;
+      }
+
+      case "charge.refunded": {
+        console.log(`💸 Stripe: charge ${obj.id} refunded ($${obj.amount_refunded / 100})`);
+        break;
+      }
+    }
+
+    // Mark event as processed (idempotency table)
+    await supabase.from("stripe_events").insert({
+      event_id: event.id,
+      type: event.type,
+      data: { object_id: obj.id },
+      processed_at: new Date().toISOString(),
+    });
+
+  } catch (err) {
+    console.error(`❌ Stripe webhook handler error [${event.type}]:`, err.message);
+    // Return 500 — Stripe will retry
+    return res.status(500).json({ error: "Webhook handler failed" });
   }
 
   res.json({ received: true });

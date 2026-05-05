@@ -106,7 +106,7 @@ async function uploadToTikTok(videoPath, title, account) {
       {
         post_info: {
           title: (title || "Posted via Redistribute").slice(0, 150),
-          privacy_level: "SELF_ONLY",
+          privacy_level: "PUBLIC_TO_EVERYONE",
           disable_duet: false,
           disable_stitch: false,
           disable_comment: false,
@@ -128,7 +128,31 @@ async function uploadToTikTok(videoPath, title, account) {
     init = resp.data;
     console.log("✅ TikTok init response:", JSON.stringify(init));
   } catch (err) {
-    const errorDetails = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    const status = err.response?.status;
+    const body = err.response?.data || {};
+    const errorCode = body?.error?.code || body?.data?.error_code || "";
+
+    // Classify error for frontend to act on correctly
+    if (status === 403 && errorCode === "unaudited_client_can_only_post_to_private_accounts") {
+      const e = new Error("TIKTOK_APP_NOT_AUDITED");
+      e.tiktokCode = errorCode;
+      e.userMessage = "Your TikTok developer app has not passed audit yet. Either submit your app for review at developers.tiktok.com, or ask your test user to enable Private Account in TikTok Settings → Privacy.";
+      throw e;
+    }
+    if (status === 401 || errorCode === "access_token_invalid") {
+      const e = new Error("TIKTOK_TOKEN_EXPIRED");
+      e.tiktokCode = errorCode;
+      e.userMessage = "TikTok session expired. Please reconnect your TikTok account.";
+      throw e;
+    }
+    if (status === 403 && errorCode === "permission_denied") {
+      const e = new Error("TIKTOK_SCOPE_MISSING");
+      e.tiktokCode = errorCode;
+      e.userMessage = "TikTok account missing video.publish permission. Please disconnect and reconnect TikTok.";
+      throw e;
+    }
+
+    const errorDetails = body ? JSON.stringify(body) : err.message;
     console.error("❌ TikTok init error:", errorDetails);
     throw new Error("TikTok API Error: " + errorDetails);
   }
@@ -371,11 +395,15 @@ if (process.env.DISABLE_WORKERS !== 'true') {
     }
 
   } catch (err) {
-    // Update distribution as failed
+    // Classify error code for frontend UI decisions
+    const errorCode = err.tiktokCode || null;
+    const errorMessage = err.userMessage || err.message;
+
     await supabase.from("distributions")
       .update({
         status: "failed",
-        error: err.message,
+        error: errorMessage,
+        error_code: errorCode,
         retry_count: (dist.retry_count || 0) + 1,
       })
       .eq("id", distributionId);
