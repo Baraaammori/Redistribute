@@ -93,7 +93,7 @@ if (process.env.DISABLE_WORKERS !== 'true') {
     const permanentPatterns = [
       'invalid credentials', 'invalid_grant', 'token has been expired or revoked',
       'account needs reconnection', 'no refresh_token', 'permission denied',
-      'quota exceeded', 'unrecoverable', 'reconnect',
+      'quota exceeded', 'unrecoverable', 'reconnect', 'access_token_invalid',
     ];
     const isPermanent = err instanceof UnrecoverableError || err.unrecoverable || permanentPatterns.some(p => msg.includes(p));
 
@@ -363,8 +363,13 @@ async function refreshTikTokToken(account) {
     }
     return account;
   } catch (err) {
-    console.error("🔑 [reposts] TikTok token refresh failed:", err.response?.data || err.message);
-    return account; // proceed with existing token
+    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    console.error("🔑 [reposts] TikTok token refresh failed:", detail);
+    // If the refresh token is expired or revoked, this is unrecoverable
+    if (detail.includes("invalid_grant") || detail.includes("access_token_invalid") || detail.includes("refresh_token")) {
+       throw new UnrecoverableError(`TikTok account needs reconnection. Go to Accounts → Reconnect TikTok.`);
+    }
+    throw err; // Transient network error, allow retry
   }
 }
 
@@ -420,9 +425,8 @@ async function uploadToTikTok(videoPath, title, account) {
       "access_token_invalid",
       "token_not_authorized_for_scope",
     ];
-    if (status === 403 && permanent.some(p => String(errCode).includes(p))) {
-      const permErr = new Error(`TikTok PERMANENT 403: ${detail}`);
-      permErr.unrecoverable = true;
+    if ((status === 403 || status === 401) && permanent.some(p => String(errCode).includes(p))) {
+      const permErr = new UnrecoverableError(`TikTok PERMANENT Auth Error [${status}]: ${detail}. Go to Accounts → Reconnect TikTok.`);
       throw permErr;
     }
     throw new Error(`TikTok API [${status}]: ${detail}`);
