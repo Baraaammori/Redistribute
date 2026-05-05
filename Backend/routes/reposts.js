@@ -390,7 +390,7 @@ async function uploadToTikTok(videoPath, title, account) {
       {
         post_info: {
           title: (title || "Posted via Redistribute").slice(0, 150),
-          privacy_level: "PUBLIC_TO_EVERYONE",
+          privacy_level: "SELF_ONLY",
           disable_duet: false,
           disable_stitch: false,
           disable_comment: false,
