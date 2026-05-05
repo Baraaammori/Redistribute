@@ -184,19 +184,61 @@ function extractAudio(videoPath, audioPath) {
 }
 
 async function transcribeWhisper(audioPath) {
-  const form = new FormData();
-  form.append("file", fs.createReadStream(audioPath), { filename: "audio.wav", contentType: "audio/wav" });
-  form.append("model", "whisper-1");
-  form.append("response_format", "verbose_json");
-  form.append("timestamp_granularities[]", "word");
+  const mode = process.env.WHISPER_MODE || "cloud";
 
-  const { data } = await axios.post(
-    "https://api.openai.com/v1/audio/transcriptions",
-    form,
-    { headers: { ...form.getHeaders(), Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-      maxBodyLength: Infinity, timeout: 180000 }
-  );
-  return data;
+  if (mode === "local") {
+    console.log(`[Whisper] Transcribing ${audioPath} locally...`);
+    // ... (local implementation remains same)
+    return new Promise((resolve, reject) => {
+      execFile("python", ["-m", "whisper", audioPath, "--model", "base.en", "--output_format", "json", "--word_timestamps", "True", "--output_dir", path.dirname(audioPath)], { maxBuffer: 1024 * 1024 * 500, timeout: 600000 }, (error, stdout, stderr) => {
+        if (error) return reject(new Error("Local Whisper failed: " + error.message));
+        const jsonPath = audioPath.replace(/\.wav$/, ".json");
+        try {
+          const data = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
+          const words = [];
+          if (data.segments) data.segments.forEach(seg => { if (seg.words) words.push(...seg.words); });
+          data.words = words;
+          resolve(data);
+        } catch (e) { reject(new Error("Failed to parse local Whisper JSON output")); }
+      });
+    });
+  } else if (mode === "groq") {
+    // FREE Cloud Transcription via Groq
+    console.log(`[Whisper] Transcribing ${audioPath} via Groq (Free)...`);
+    const form = new FormData();
+    form.append("file", fs.createReadStream(audioPath), { filename: "audio.wav", contentType: "audio/wav" });
+    form.append("model", "whisper-large-v3");
+    form.append("response_format", "verbose_json");
+
+    const { data } = await axios.post(
+      "https://api.groq.com/openai/v1/audio/transcriptions",
+      form,
+      { headers: { ...form.getHeaders(), Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
+        maxBodyLength: Infinity, timeout: 300000 }
+    );
+    // Groq returns words in segments if requested, but current API might vary. 
+    // We flatten segments to ensure our ASS generator works.
+    const words = [];
+    if (data.segments) data.segments.forEach(seg => { if (seg.words) words.push(...seg.words); });
+    data.words = words.length > 0 ? words : (data.segments || []); 
+    return data;
+  } else {
+    // Cloud mode (OpenAI API)
+    console.log(`[Whisper] Transcribing ${audioPath} via OpenAI Cloud API...`);
+    const form = new FormData();
+    form.append("file", fs.createReadStream(audioPath), { filename: "audio.wav", contentType: "audio/wav" });
+    form.append("model", "whisper-1");
+    form.append("response_format", "verbose_json");
+    form.append("timestamp_granularities[]", "word");
+
+    const { data } = await axios.post(
+      "https://api.openai.com/v1/audio/transcriptions",
+      form,
+      { headers: { ...form.getHeaders(), Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+        maxBodyLength: Infinity, timeout: 300000 }
+    );
+    return data;
+  }
 }
 
 /**

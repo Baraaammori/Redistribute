@@ -39,23 +39,66 @@ function extractAudio(videoPath, audioPath) {
 }
 
 async function whisperTranscribe(audioPath) {
-  if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not set");
-  const fd = new FormData();
-  fd.append("file", fs.createReadStream(audioPath), { filename: "audio.wav", contentType: "audio/wav" });
-  fd.append("model", "whisper-1");
-  fd.append("response_format", "verbose_json");
-  fd.append("timestamp_granularities[]", "word");
+  const mode = process.env.WHISPER_MODE || "cloud";
 
-  const res = await axios.post("https://api.openai.com/v1/audio/transcriptions", fd, {
-    headers: { ...fd.getHeaders(), Authorization: `Bearer ${OPENAI_API_KEY}` },
-    maxBodyLength: Infinity,
-    timeout: 300_000,
-  });
-  return res.data; // { text, words: [{word, start, end}], segments: [...] }
+  if (mode === "local") {
+    console.log(`[Whisper] Transcribing ${audioPath} locally...`);
+    return new Promise((resolve, reject) => {
+      execFile("python", ["-m", "whisper", audioPath, "--model", "base.en", "--output_format", "json", "--word_timestamps", "True", "--output_dir", path.dirname(audioPath)], { maxBuffer: 1024 * 1024 * 500, timeout: 600000 }, (error, stdout, stderr) => {
+        if (error) return reject(new Error("Local Whisper failed: " + error.message));
+        const jsonPath = audioPath.replace(/\.wav$/, ".json");
+        try {
+          const data = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
+          const words = [];
+          if (data.segments) data.segments.forEach(seg => { if (seg.words) words.push(...seg.words); });
+          data.words = words;
+          resolve(data);
+        } catch (e) { reject(new Error("Failed to parse local Whisper JSON output")); }
+      });
+    });
+  } else if (mode === "groq") {
+    console.log(`[Whisper] Transcribing ${audioPath} via Groq (Free Cloud)...`);
+    const fd = new FormData();
+    fd.append("file", fs.createReadStream(audioPath), { filename: "audio.wav", contentType: "audio/wav" });
+    fd.append("model", "whisper-large-v3");
+    fd.append("response_format", "verbose_json");
+
+    const res = await axios.post("https://api.groq.com/openai/v1/audio/transcriptions", fd, {
+      headers: { ...fd.getHeaders(), Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
+      maxBodyLength: Infinity,
+      timeout: 300_000,
+    });
+    const data = res.data;
+    const words = [];
+    if (data.segments) data.segments.forEach(seg => { if (seg.words) words.push(...seg.words); });
+    data.words = words.length > 0 ? words : (data.segments || []);
+    return data;
+  } else {
+    // Cloud mode (OpenAI API)
+    console.log(`[Whisper] Transcribing ${audioPath} via OpenAI Cloud API...`);
+    if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not set");
+    const fd = new FormData();
+    fd.append("file", fs.createReadStream(audioPath), { filename: "audio.wav", contentType: "audio/wav" });
+    fd.append("model", "whisper-1");
+    fd.append("response_format", "verbose_json");
+    fd.append("timestamp_granularities[]", "word");
+
+    const res = await axios.post("https://api.openai.com/v1/audio/transcriptions", fd, {
+      headers: { ...fd.getHeaders(), Authorization: `Bearer ${OPENAI_API_KEY}` },
+      maxBodyLength: Infinity,
+      timeout: 300_000,
+    });
+    return res.data;
+  }
 }
 
 async function gptRankClips(transcript, duration, clipCount = 3, clipDuration = 60) {
-  if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not set");
+  const mode = process.env.LLM_MODE || "openai";
+  const apiKey = mode === "groq" ? process.env.GROQ_API_KEY : process.env.OPENAI_API_KEY;
+  const baseUrl = mode === "groq" ? "https://api.groq.com/openai/v1/chat/completions" : "https://api.openai.com/v1/chat/completions";
+  const model = mode === "groq" ? "llama-3.3-70b-versatile" : "gpt-4o";
+
+  if (!apiKey) throw new Error(`${mode.toUpperCase()}_API_KEY not set`);
 
   const prompt = `You are a viral short-form content expert. Given a video transcript with word timestamps, identify the ${clipCount} best clips for TikTok/Reels/Shorts.
 
@@ -82,19 +125,18 @@ Rules:
 - Pick moments with hooks, emotional peaks, key insights, or humor
 - No overlap between clips`;
 
-  const res = await axios.post("https://api.openai.com/v1/chat/completions", {
-    model: "gpt-4o",
+  const res = await axios.post(baseUrl, {
+    model: model,
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
     temperature: 0.3,
   }, {
-    headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     timeout: 60_000,
   });
 
   const content = res.data.choices[0].message.content;
   const parsed = JSON.parse(content);
-  // Handle both {clips:[...]} and [...] responses
   return Array.isArray(parsed) ? parsed : (parsed.clips || parsed.results || []);
 }
 
