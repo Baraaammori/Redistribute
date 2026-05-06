@@ -188,8 +188,7 @@ function Queue() {
     load();
     const id = setInterval(() => load(true), 5000);
     return () => clearInterval(id);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, []); // load is stable — defined inside the component, no deps change
 
   const doDelete = async (id: string) => { await api.reposts.delete(id); load(); };
   const doRetry  = async (id: string) => { await api.reposts.retry(id);  load(); };
