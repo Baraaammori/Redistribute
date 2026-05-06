@@ -17,7 +17,24 @@ const { Queue } = require("bullmq");
 const supabase = require("../lib/supabase");
 const { authenticateToken } = require("../middleware/auth");
 const { analyzeVideo, generateClips, generateThumbnail } = require("../lib/ffmpeg");
-const { decide, calculateClipTimestamps } = require("../lib/smartEngine");
+// Inlined from the removed smartEngine module
+function decide(meta) {
+  const { duration_seconds = 0, orientation = "landscape" } = meta || {};
+  const clip_duration = orientation === "portrait" ? 60 : 45;
+  const clip_count    = Math.min(Math.max(Math.floor(duration_seconds / clip_duration), 1), 5);
+  return { clip_count, clip_duration, orientation };
+}
+
+function calculateClipTimestamps(totalDuration, count, clipDuration) {
+  const timestamps = [];
+  const step = totalDuration / (count + 1);
+  for (let i = 0; i < count; i++) {
+    const start_time = Math.round(step * (i + 1));
+    const duration   = Math.min(clipDuration, totalDuration - start_time);
+    if (duration > 5) timestamps.push({ index: i, start_time, duration });
+  }
+  return timestamps;
+}
 const { uploadFile, cleanupTemp, cleanupTempDir } = require("../lib/storage");
 const connection = require("../lib/redis");
 

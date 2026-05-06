@@ -4,7 +4,12 @@
 const { execFile } = require("child_process");
 const fs = require("fs");
 const path = require("path");
-const { getOrientation } = require("./smartEngine");
+function getOrientation(width, height) {
+  const ratio = width / height;
+  if (ratio > 1.2) return "landscape";
+  if (ratio < 0.85) return "portrait";
+  return "square";
+}
 
 /**
  * Analyze video file with ffprobe

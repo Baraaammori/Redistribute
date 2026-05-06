@@ -1,180 +1,164 @@
+// ─── Reposts Route + Worker ───────────────────────────────────────────────────
+// POST   /api/reposts          — create a repost job
+// GET    /api/reposts          — list user's reposts
+// DELETE /api/reposts/:id      — remove a repost
+// POST   /api/reposts/:id/retry — retry a failed repost
+// GET    /api/reposts/queue-health — BullMQ health check
+// ─────────────────────────────────────────────────────────────────────────────
 const router  = require("express").Router();
 const { Queue, Worker, UnrecoverableError } = require("bullmq");
 const axios   = require("axios");
 const fs      = require("fs");
 const path    = require("path");
-const os      = require("os");
-const { execFile } = require("child_process");
 const { google } = require("googleapis");
 const supabase = require("../lib/supabase");
 const { authenticateToken } = require("../middleware/auth");
 const connection = require("../lib/redis");
 const { transcodeToMP4 } = require("../lib/ffmpeg");
-const youtubeDownloader = require("../lib/youtube-downloader");
+const youtubeDownloader  = require("../lib/youtube-downloader");
+const { refreshTokenIfExpired } = require("../lib/tokenRefresh");
+const { uploadFile } = require("../lib/storage");
 
-// ── Queue setup ───────────────────────────────────────────────────────────────
+// ── Queue ─────────────────────────────────────────────────────────────────────
 const repostQueue = new Queue("reposts", { connection });
+module.exports.repostQueue = repostQueue; // exported for use by auto-republish poller
 
-// ── Worker (processes jobs) ───────────────────────────────────────────────────
-let worker = null;
-if (process.env.DISABLE_WORKERS !== 'true') {
-  worker = new Worker("reposts", async job => {
-  const startTime = Date.now();
-  const { repostId } = job.data;
-  console.log(`\n🔄 [reposts] Job ${job.id} starting | repostId=${repostId} | attempt=${job.attemptsMade + 1}/${job.opts?.attempts || 3}`);
+// ── Worker ────────────────────────────────────────────────────────────────────
+if (process.env.DISABLE_WORKERS !== "true") {
+  const worker = new Worker("reposts", async job => {
+    const { repostId, autoJobId } = job.data;
+    const label = `[reposts][job:${job.id}]`;
+    console.log(`\n🔄 ${label} starting | attempt=${job.attemptsMade + 1}/3`);
 
-  const { data: repost } = await supabase
-    .from("reposts")
-    .select("*, source_account:platform_accounts(*)")
-    .eq("id", repostId)
-    .single();
+    const { data: repost } = await supabase
+      .from("reposts")
+      .select("*, source_account:platform_accounts(*)")
+      .eq("id", repostId)
+      .single();
 
-  if (!repost) throw new Error("Repost not found");
+    if (!repost) throw new Error("Repost not found");
 
-  await supabase.from("reposts").update({ status: "processing" }).eq("id", repostId);
-
-  let videoPath;
-  let transcodedPath;
-  try {
-    // 1. Download source video
-    console.log(`📥 [reposts] Downloading video: ${repost.source_video_url?.slice(0, 80)}...`);
-    videoPath = await downloadVideo(repost.source_video_url, repost.id, job.attemptsMade);
-    const dlSize = fs.statSync(videoPath).size;
-    console.log(`📥 [reposts] Downloaded to ${videoPath} (${dlSize} bytes)`);
-
-    // 1b. Check if download is valid (not an HTML error page)
-    if (dlSize < 1000) {
-      const head = fs.readFileSync(videoPath, 'utf8').slice(0, 200);
-      if (head.includes('<html') || head.includes('<!DOCTYPE')) {
-        const permErr = new Error(`Downloaded file is an HTML page, not a video: ${head.slice(0, 100)}`);
-        permErr.unrecoverable = true;
-        throw permErr;
-      }
+    await supabase.from("reposts").update({ status: "processing" }).eq("id", repostId);
+    if (autoJobId) {
+      await supabase.from("auto_republish_jobs").update({ status: "processing" }).eq("id", autoJobId);
     }
 
-    // 2. Upload to each destination
-    for (const dest of repost.destinations) {
-      console.log(`🎯 [reposts] Processing destination: ${dest}`);
-      const { data: destAccount } = await supabase
-        .from("platform_accounts")
-        .select("*")
-        .eq("user_id", repost.user_id)
-        .eq("platform", dest)
-        .single();
+    let videoPath = null;
+    let transcodedPath = null;
 
-      if (!destAccount) {
-        console.warn(`⚠️ [reposts] No ${dest} account for user ${repost.user_id}, skipping`);
-        continue;
+    try {
+      // 1. Download source video
+      console.log(`📥 ${label} Downloading: ${repost.source_video_url?.slice(0, 80)}…`);
+      videoPath = await downloadVideo(repost.source_video_url, repost.id, job.attemptsMade);
+      const dlSize = fs.statSync(videoPath).size;
+      console.log(`📥 ${label} Downloaded ${dlSize} bytes`);
+
+      if (dlSize < 1000) {
+        const head = fs.readFileSync(videoPath, "utf8").slice(0, 200);
+        if (head.includes("<html") || head.includes("<!DOCTYPE")) {
+          throw Object.assign(
+            new Error(`Downloaded file is HTML, not a video: ${head.slice(0, 80)}`),
+            { unrecoverable: true }
+          );
+        }
       }
 
-      // Log token state (without exposing the actual token)
-      const tokenAge = destAccount.expires_at ? `expires ${new Date(destAccount.expires_at).toISOString()}` : "no expiry set";
-      console.log(`🔑 [reposts] ${dest} token: ${tokenAge}`);
+      // 2. Upload to each destination
+      for (const dest of repost.destinations) {
+        console.log(`🎯 ${label} Uploading to: ${dest}`);
+        let { data: destAccount } = await supabase
+          .from("platform_accounts")
+          .select("*")
+          .eq("user_id", repost.user_id)
+          .eq("platform", dest)
+          .single();
 
-      if (dest === "youtube")   await uploadToYouTube(videoPath, repost.title, destAccount);
-      if (dest === "tiktok") {
-        // TikTok requires valid MP4 with H264 — transcode if needed
-        const uploadPath = await ensureTikTokMP4(videoPath, repost.id);
-        if (uploadPath !== videoPath) transcodedPath = uploadPath;
-        await uploadToTikTok(uploadPath, repost.title, destAccount);
+        if (!destAccount) {
+          console.warn(`⚠️ ${label} No ${dest} account for user ${repost.user_id}, skipping`);
+          continue;
+        }
+
+        // Refresh token if needed
+        destAccount = await refreshTokenIfExpired(destAccount);
+
+        if (dest === "youtube") {
+          await uploadToYouTube(videoPath, repost.title, destAccount);
+        }
+        if (dest === "tiktok") {
+          const uploadPath = await ensureTikTokMP4(videoPath, repost.id);
+          if (uploadPath !== videoPath) transcodedPath = uploadPath;
+          await uploadToTikTok(uploadPath, repost.title, destAccount);
+        }
+        if (dest === "instagram") {
+          await uploadToInstagram(videoPath, repost.title, repost.user_id, destAccount);
+        }
       }
-      if (dest === "instagram") await uploadToInstagram(videoPath, repost.title, destAccount);
+
+      console.log(`✅ ${label} Completed`);
+      await supabase.from("reposts").update({ status: "done" }).eq("id", repostId);
+      if (autoJobId) {
+        await supabase.from("auto_republish_jobs")
+          .update({ status: "done", completed_at: new Date().toISOString() })
+          .eq("id", autoJobId);
+      }
+    } catch (err) {
+      const msg = (err.message || "").toLowerCase();
+      const permanentPatterns = [
+        "invalid credentials", "invalid_grant", "token has been expired or revoked",
+        "account needs reconnection", "no refresh_token", "permission denied",
+        "quota exceeded", "unrecoverable", "reconnect", "access_token_invalid",
+      ];
+      const isPermanent = err instanceof UnrecoverableError || err.unrecoverable
+        || permanentPatterns.some(p => msg.includes(p));
+
+      const errMsg = err.message || "Unknown error";
+      await supabase.from("reposts").update({ status: "failed", error: errMsg }).eq("id", repostId);
+      if (autoJobId) {
+        await supabase.from("auto_republish_jobs")
+          .update({ status: "failed", error_message: errMsg })
+          .eq("id", autoJobId);
+      }
+
+      if (isPermanent) {
+        console.error(`🚫 ${label} PERMANENT failure: ${errMsg}`);
+        throw err instanceof UnrecoverableError ? err : new UnrecoverableError(errMsg);
+      }
+      console.error(`❌ ${label} Transient failure (will retry): ${errMsg}`);
+      throw err;
+    } finally {
+      if (videoPath && fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
+      if (transcodedPath && fs.existsSync(transcodedPath)) fs.unlinkSync(transcodedPath);
     }
+  }, { connection, concurrency: 2, attempts: 3, backoff: { type: "exponential", delay: 5000 } });
 
-    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.log(`✅ [reposts] Job ${job.id} completed in ${duration}s`);
-    await supabase.from("reposts").update({ status: "done" }).eq("id", repostId);
-  } catch (err) {
-    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.error(`❌ [reposts] Job ${job.id} failed after ${duration}s:`, err.message);
-    
-    // Auto-detect permanent errors even if sub-functions forgot to use UnrecoverableError
-    const msg = (err.message || '').toLowerCase();
-    const permanentPatterns = [
-      'invalid credentials', 'invalid_grant', 'token has been expired or revoked',
-      'account needs reconnection', 'no refresh_token', 'permission denied',
-      'quota exceeded', 'unrecoverable', 'reconnect', 'access_token_invalid',
-    ];
-    const isPermanent = err instanceof UnrecoverableError || err.unrecoverable || permanentPatterns.some(p => msg.includes(p));
-
-    if (isPermanent) {
-      console.error(`🚫 [reposts] PERMANENT failure — will not retry: ${err.message}`);
-      await supabase.from("reposts").update({ status: "failed", error: err.message }).eq("id", repostId);
-      throw err instanceof UnrecoverableError ? err : new UnrecoverableError(err.message);
-    }
-
-    console.log(`🔄 [reposts] Transient failure — BullMQ may retry (attempt ${job.attemptsMade + 1})`);
-    await supabase.from("reposts").update({ status: "failed", error: err.message }).eq("id", repostId);
-    throw err;
-  } finally {
-    if (videoPath && fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
-    if (transcodedPath && fs.existsSync(transcodedPath)) fs.unlinkSync(transcodedPath);
-  }
-  }, { connection, concurrency: 2 });
-
-  worker.on("completed", (job) => {
-    console.log(`✅ [reposts] Job ${job.id} completed successfully`);
-  });
-  worker.on("failed", (job, err) => {
-    console.error(`❌ [reposts] Job ${job.id} failed (attempt ${job.attemptsMade}):`, err.message);
-  });
+  worker.on("completed", job => console.log(`✅ [reposts] Job ${job.id} done`));
+  worker.on("failed",    (job, err) => console.error(`❌ [reposts] Job ${job.id} failed (attempt ${job.attemptsMade}): ${err.message}`));
 } else {
-  console.log(`⚠️ [reposts] Worker disabled on this instance (DISABLE_WORKERS=true)`);
+  console.log("⚠️ [reposts] Worker disabled (DISABLE_WORKERS=true)");
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Download helpers ──────────────────────────────────────────────────────────
 
-/**
- * Detect if a URL is a YouTube watch/shorts/embed URL.
- */
-function isYouTubeUrl(url) {
-  return /(?:youtube\.com\/(?:watch|shorts|embed)|youtu\.be\/)/.test(url || '');
-}
+function isYouTubeUrl(url) { return /(?:youtube\.com\/(?:watch|shorts|embed)|youtu\.be\/)/.test(url || ""); }
+function isTikTokUrl(url)  { return /tiktok\.com/.test(url || ""); }
 
-/**
- * Detect if a URL is a TikTok video URL.
- */
-function isTikTokUrl(url) {
-  return /tiktok\.com/.test(url || '');
-}
-
-/**
- * Download video using yt-dlp for YouTube/TikTok, or Axios for direct URLs.
- * yt-dlp downloads TikTok videos WITHOUT watermarks automatically.
- */
-async function downloadVideo(url, id, jobAttemptsMade = 0) {
+async function downloadVideo(url, id, attempt = 0) {
   if (isYouTubeUrl(url) || isTikTokUrl(url)) {
-    return downloadWithYtDlp(url, id, jobAttemptsMade);
+    return youtubeDownloader.download(url, id, attempt + 1);
   }
   return downloadDirect(url, id);
 }
 
-/**
- * Download from YouTube/TikTok using the dedicated downloader class.
- * Supports cookies, proxy rotation, and anti-bot evasion.
- */
-function downloadWithYtDlp(url, id, jobAttemptsMade = 0) {
-  // Pass the attempt count to the downloader so it can switch strategies
-  return youtubeDownloader.download(url, id, jobAttemptsMade + 1);
-}
-
-/**
- * Direct HTTP download for non-YouTube URLs (Supabase storage, S3, etc.).
- */
 async function downloadDirect(url, id) {
   const dest = path.join("/tmp", `redistribute_${id}_raw`);
   const writer = fs.createWriteStream(dest);
   const response = await axios({ url, method: "GET", responseType: "stream" });
-  const contentType = response.headers['content-type'] || 'unknown';
-  console.log(`📥 [reposts] Direct download content-type: ${contentType}`);
-
-  // Reject HTML responses immediately (don't even save the file)
-  if (contentType.includes('text/html')) {
+  const ct = response.headers["content-type"] || "";
+  if (ct.includes("text/html")) {
     writer.close();
     if (fs.existsSync(dest)) fs.unlinkSync(dest);
-    throw new UnrecoverableError(`Download returned HTML page (content-type: ${contentType}), not a video file. URL may be a webpage, not a direct video link.`);
+    throw new UnrecoverableError(`Download returned HTML page (${ct}) — not a video URL.`);
   }
-
   response.data.pipe(writer);
   return new Promise((resolve, reject) => {
     writer.on("finish", () => resolve(dest));
@@ -182,132 +166,41 @@ async function downloadDirect(url, id) {
   });
 }
 
-/**
- * Validate file is a proper MP4 for TikTok, transcode if not.
- * Returns the path to a guaranteed-valid MP4.
- */
 async function ensureTikTokMP4(videoPath, id) {
-  // Read first 12 bytes for signature check (efficient, no full-file read)
   const headerBuf = Buffer.alloc(12);
-  const fd = fs.openSync(videoPath, 'r');
+  const fd = fs.openSync(videoPath, "r");
   fs.readSync(fd, headerBuf, 0, 12, 0);
   fs.closeSync(fd);
-  const hasFtyp = headerBuf.slice(4, 8).toString('ascii') === 'ftyp';
-  const header = headerBuf.toString('hex');
+  const hasFtyp = headerBuf.subarray(4, 8).toString("ascii") === "ftyp";
   const fileSize = fs.statSync(videoPath).size;
 
-  console.log(`🔍 [reposts] File validation: size=${fileSize}, ftyp=${hasFtyp}, header=${header.slice(0, 24)}`);
-
-  // Check for HTML error page (YouTube HTML pages are ~1MB!)
-  if (header.startsWith('3c21444f') || header.startsWith('3c68746d') || header.startsWith('3c48544d')) {
-    // 3c21444f = "<!DO", 3c68746d = "<htm", 3c48544d = "<HTM"
-    throw new UnrecoverableError('Downloaded file is an HTML page, not a video. Source URL likely requires yt-dlp for extraction.');
-  }
-
-  // Check for zero-length or tiny files
-  if (fileSize < 10000) {
-    throw new UnrecoverableError(`File too small to be a valid video: ${fileSize} bytes`);
-  }
-
-  // If valid MP4, return as-is
-  if (hasFtyp) {
-    console.log('✅ [reposts] File is a valid MP4, no transcoding needed');
-    return videoPath;
-  }
-
-  // Check for WebM signature (1a45dfa3 = EBML header for WebM/MKV)
-  if (header.startsWith('1a45dfa3')) {
-    console.log('🔧 [reposts] File is WebM/MKV — transcoding to MP4...');
-  } else {
-    console.log(`🔧 [reposts] Unknown format (header: ${header.slice(0, 16)}) — attempting transcode...`);
-  }
+  if (fileSize < 10000) throw new UnrecoverableError(`File too small (${fileSize} bytes)`);
+  if (hasFtyp) return videoPath;
 
   const mp4Path = path.join("/tmp", `redistribute_${id}_tiktok.mp4`);
-
   try {
     await transcodeToMP4(videoPath, mp4Path);
-
-    // Verify the output
     const outBuf = Buffer.alloc(8);
-    const outFd = fs.openSync(mp4Path, 'r');
+    const outFd = fs.openSync(mp4Path, "r");
     fs.readSync(outFd, outBuf, 0, 8, 0);
     fs.closeSync(outFd);
-    const outFtyp = outBuf.slice(4, 8).toString('ascii') === 'ftyp';
-    const outSize = fs.statSync(mp4Path).size;
-    console.log(`✅ [reposts] Transcode output: ${outSize} bytes, ftyp=${outFtyp}`);
-
-    if (!outFtyp || outSize < 1000) {
-      throw new UnrecoverableError('Transcoded file is still invalid');
+    if (outBuf.subarray(4, 8).toString("ascii") !== "ftyp" || fs.statSync(mp4Path).size < 1000) {
+      throw new UnrecoverableError("Transcoded file is still invalid");
     }
-
     return mp4Path;
   } catch (err) {
     if (fs.existsSync(mp4Path)) fs.unlinkSync(mp4Path);
-    if (err instanceof UnrecoverableError) throw err;
-    throw new UnrecoverableError(`FFmpeg transcode failed: ${err.message}`);
+    throw err instanceof UnrecoverableError ? err : new UnrecoverableError(`FFmpeg transcode failed: ${err.message}`);
   }
 }
 
-/**
- * Refresh a YouTube/Google OAuth2 access token using the refresh_token.
- * Saves new tokens to the database.
- */
-async function refreshYouTubeToken(account) {
-  console.log(`🔑 [youtube] Refreshing token for account ${account.id}...`);
-  try {
-    const auth = new google.auth.OAuth2(
-      process.env.YOUTUBE_CLIENT_ID,
-      process.env.YOUTUBE_CLIENT_SECRET,
-      process.env.YOUTUBE_REDIRECT_URI || 'postmessage'
-    );
-    auth.setCredentials({ refresh_token: account.refresh_token });
-    const { credentials } = await auth.refreshAccessToken();
-
-    // Save refreshed tokens to DB
-    const updates = {
-      access_token: credentials.access_token,
-      expires_at: credentials.expiry_date ? new Date(credentials.expiry_date) : new Date(Date.now() + 3600000),
-    };
-    if (credentials.refresh_token) updates.refresh_token = credentials.refresh_token;
-
-    await supabase.from("platform_accounts").update(updates).eq("id", account.id);
-
-    account.access_token = credentials.access_token;
-    if (credentials.refresh_token) account.refresh_token = credentials.refresh_token;
-    account.expires_at = updates.expires_at;
-
-    console.log(`✅ [youtube] Token refreshed, new expiry: ${updates.expires_at.toISOString()}`);
-    return account;
-  } catch (err) {
-    const msg = err.message || '';
-    console.error(`❌ [youtube] Token refresh failed: ${msg}`);
-    // If refresh token is revoked/invalid, this is permanent
-    if (msg.includes('invalid_grant') || msg.includes('Token has been expired or revoked')) {
-      throw new UnrecoverableError(`YouTube account needs reconnection: ${msg}. Go to Accounts → Reconnect YouTube.`);
-    }
-    throw err; // Transient error, allow retry
-  }
-}
+// ── Platform upload functions ─────────────────────────────────────────────────
 
 async function uploadToYouTube(videoPath, title, account) {
-  // 1. Check token expiry — refresh if within 5 minutes of expiring
-  const expiresAt = account.expires_at ? new Date(account.expires_at) : null;
-  const isExpired = !expiresAt || expiresAt < new Date(Date.now() + 5 * 60 * 1000);
-
-  if (isExpired) {
-    console.log(`⏰ [youtube] Token expired or expiring soon (${expiresAt?.toISOString() || 'no expiry'}), refreshing...`);
-    if (!account.refresh_token) {
-      throw new UnrecoverableError('YouTube account has no refresh_token. Reconnect in Accounts page.');
-    }
-    account = await refreshYouTubeToken(account);
-  }
-
-  // 2. Upload with valid token
-  console.log(`📤 [youtube] Uploading: "${(title || '').slice(0, 60)}" (token valid until ${new Date(account.expires_at).toISOString()})`);
   const auth = new google.auth.OAuth2(
     process.env.YOUTUBE_CLIENT_ID,
     process.env.YOUTUBE_CLIENT_SECRET,
-    process.env.YOUTUBE_REDIRECT_URI || 'postmessage'
+    process.env.YOUTUBE_REDIRECT_URI || "postmessage"
   );
   auth.setCredentials({ access_token: account.access_token, refresh_token: account.refresh_token });
   const yt = google.youtube({ version: "v3", auth });
@@ -321,163 +214,148 @@ async function uploadToYouTube(videoPath, title, account) {
       },
       media: { body: fs.createReadStream(videoPath) },
     });
-    console.log(`✅ [youtube] Upload success! Video ID: ${res.data.id}`);
-    return res.data;
+    console.log(`✅ [youtube] Uploaded: ${res.data.id}`);
   } catch (err) {
     const status = err.code || err.response?.status;
-    const msg = err.message || '';
-    console.error(`❌ [youtube] Upload failed [${status}]: ${msg}`);
-
-    // Permanent auth failures — don't retry
-    if (status === 401 || msg.includes('Invalid Credentials') || msg.includes('invalid_grant')) {
+    const msg    = err.message || "";
+    if (status === 401 || msg.includes("Invalid Credentials") || msg.includes("invalid_grant")) {
       throw new UnrecoverableError(`YouTube auth failed: ${msg}. Reconnect your YouTube account.`);
     }
-    if (status === 403 && msg.includes('quotaExceeded')) {
+    if (status === 403 && msg.includes("quotaExceeded")) {
       throw new UnrecoverableError(`YouTube API quota exceeded. Try again tomorrow.`);
     }
-    throw err; // 500, timeout, network errors → allow BullMQ retry
-  }
-}
-
-async function refreshTikTokToken(account) {
-  try {
-    const { data } = await axios.post(
-      "https://open.tiktokapis.com/v2/oauth/token/",
-      new URLSearchParams({
-        client_key: process.env.TIKTOK_CLIENT_KEY,
-        client_secret: process.env.TIKTOK_CLIENT_SECRET,
-        grant_type: "refresh_token",
-        refresh_token: account.refresh_token,
-      }),
-      { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
-    );
-    if (data.access_token) {
-      await supabase.from("platform_accounts").update({
-        access_token: data.access_token,
-        refresh_token: data.refresh_token,
-        expires_at: new Date(Date.now() + data.expires_in * 1000),
-      }).eq("id", account.id);
-      account.access_token = data.access_token;
-      account.refresh_token = data.refresh_token;
-      console.log("🔑 [reposts] TikTok token refreshed");
-    }
-    return account;
-  } catch (err) {
-    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-    console.error("🔑 [reposts] TikTok token refresh failed:", detail);
-    // If the refresh token is expired or revoked, this is unrecoverable
-    if (detail.includes("invalid_grant") || detail.includes("access_token_invalid") || detail.includes("refresh_token")) {
-       throw new UnrecoverableError(`TikTok account needs reconnection. Go to Accounts → Reconnect TikTok.`);
-    }
-    throw err; // Transient network error, allow retry
+    if (status === 413) throw new UnrecoverableError(`Video too large for YouTube API (${status}).`);
+    throw err;
   }
 }
 
 async function uploadToTikTok(videoPath, title, account) {
-  // Refresh token if expiring within 1 hour
-  if (account.expires_at && new Date(account.expires_at) < new Date(Date.now() + 3600000)) {
-    console.log("🔑 [reposts] Token expiring soon, refreshing...");
-    account = await refreshTikTokToken(account);
-  }
-
   const stat = fs.statSync(videoPath);
-  console.log(`📤 [reposts] TikTok upload: size=${stat.size}, title="${(title || "").slice(0, 50)}"`);
-
   let init;
   try {
     const resp = await axios.post(
       "https://open.tiktokapis.com/v2/post/publish/video/init/",
       {
         post_info: {
-          title: (title || "Posted via Redistribute").slice(0, 150),
-          privacy_level: "SELF_ONLY",
-          disable_duet: false,
-          disable_stitch: false,
+          title:           (title || "Posted via Redistribute").slice(0, 150),
+          privacy_level:   "PUBLIC_TO_EVERYONE",
+          disable_duet:    false,
+          disable_stitch:  false,
           disable_comment: false,
         },
         source_info: {
-          source: "FILE_UPLOAD",
-          video_size: stat.size,
-          chunk_size: stat.size,
+          source:            "FILE_UPLOAD",
+          video_size:        stat.size,
+          chunk_size:        stat.size,
           total_chunk_count: 1,
         },
       },
       {
         headers: {
-          Authorization: `Bearer ${account.access_token}`,
+          Authorization:  `Bearer ${account.access_token}`,
           "Content-Type": "application/json; charset=UTF-8",
         },
       }
     );
     init = resp.data;
-    console.log("✅ [reposts] TikTok init OK:", JSON.stringify(init));
   } catch (err) {
-    const body = err.response?.data;
+    const body   = err.response?.data;
     const detail = body ? JSON.stringify(body) : err.message;
     const status = err.response?.status;
-    console.error(`❌ [reposts] TikTok init failed [${status}]:`, detail);
-
-    // Classify: permanent vs transient
-    const errCode = body?.error?.code || body?.error || "";
+    const errCode = String(body?.error?.code || body?.error || "");
     const permanent = [
       "unaudited_client_can_only_post_to_private_accounts",
-      "scope_not_authorized",
-      "access_token_invalid",
-      "token_not_authorized_for_scope",
+      "scope_not_authorized", "access_token_invalid", "token_not_authorized_for_scope",
     ];
-    if ((status === 403 || status === 401) && permanent.some(p => String(errCode).includes(p))) {
-      const permErr = new UnrecoverableError(`TikTok PERMANENT Auth Error [${status}]: ${detail}. Go to Accounts → Reconnect TikTok.`);
-      throw permErr;
+    if ((status === 401 || status === 403) && permanent.some(p => errCode.includes(p))) {
+      throw new UnrecoverableError(`TikTok permanent auth error [${status}]: ${detail}`);
     }
+    if (status === 429) throw new Error(`TikTok rate limited (429). Will retry.`);
     throw new Error(`TikTok API [${status}]: ${detail}`);
   }
 
   const uploadUrl = init.data?.upload_url;
-  if (!uploadUrl) throw new Error("TikTok no upload_url: " + JSON.stringify(init));
+  if (!uploadUrl) throw new Error("TikTok: no upload_url returned: " + JSON.stringify(init));
 
-  const buffer = fs.readFileSync(videoPath);
+  const buffer   = fs.readFileSync(videoPath);
   const fileSize = buffer.length;
+  await axios.put(uploadUrl, buffer, {
+    headers: {
+      "Content-Type":  "video/mp4",
+      "Content-Length": fileSize,
+      "Content-Range": `bytes 0-${fileSize - 1}/${fileSize}`,
+    },
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+    transformRequest: [(d) => d],
+  });
+  console.log("✅ [tiktok] Upload complete");
+}
 
-  // Validate MP4 signature
-  const hasFtyp = buffer.slice(4, 8).toString('ascii') === 'ftyp';
-  console.log(`📤 [reposts] Uploading ${fileSize} bytes | MP4 ftyp: ${hasFtyp}`);
-  if (!hasFtyp) {
-    console.warn('⚠️ [reposts] File may not be a valid MP4 — ftyp box not found');
+async function uploadToInstagram(videoPath, title, userId, account) {
+  // Instagram Graph API requires a public URL for video containers.
+  // We upload to Supabase Storage first (temp public URL), then publish.
+  const storagePath = `temp_reposts/${userId}/${Date.now()}_repost.mp4`;
+  let publicUrl;
+  try {
+    const { url } = await uploadFile(videoPath, storagePath, "video/mp4");
+    publicUrl = url;
+  } catch (err) {
+    throw new Error(`Instagram pre-upload to storage failed: ${err.message}`);
   }
+
+  const igUserId = account.handle;
+  const token    = account.access_token;
 
   try {
-    await axios.put(uploadUrl, buffer, {
-      headers: {
-        'Content-Type': 'video/mp4',
-        'Content-Length': fileSize,
-        'Content-Range': `bytes 0-${fileSize - 1}/${fileSize}`,
-      },
-      maxBodyLength: Infinity,
-      maxContentLength: Infinity,
-      // Prevent Axios from transforming the raw binary buffer
-      transformRequest: [(data) => data],
-    });
-    console.log("✅ [reposts] TikTok upload complete!");
+    // 1. Create media container
+    const { data: container } = await axios.post(
+      `https://graph.facebook.com/v19.0/${igUserId}/media`,
+      null,
+      {
+        params: {
+          video_url:   publicUrl,
+          caption:     title || "Posted via Redistribute.io",
+          media_type:  "REELS",
+          access_token: token,
+        },
+      }
+    );
+
+    if (!container.id) throw new Error("Instagram: no container ID returned");
+
+    // 2. Wait for container to finish processing (poll up to 60s)
+    let ready = false;
+    for (let i = 0; i < 12; i++) {
+      await new Promise(r => setTimeout(r, 5000));
+      const { data: status } = await axios.get(
+        `https://graph.facebook.com/v19.0/${container.id}`,
+        { params: { fields: "status_code", access_token: token } }
+      );
+      if (status.status_code === "FINISHED") { ready = true; break; }
+      if (status.status_code === "ERROR") throw new Error(`Instagram container processing failed: ${JSON.stringify(status)}`);
+    }
+    if (!ready) throw new Error("Instagram media container did not finish processing within 60s");
+
+    // 3. Publish
+    await axios.post(
+      `https://graph.facebook.com/v19.0/${igUserId}/media_publish`,
+      null,
+      { params: { creation_id: container.id, access_token: token } }
+    );
+    console.log("✅ [instagram] Reels published");
   } catch (err) {
-    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
     const status = err.response?.status;
-    console.error(`❌ [reposts] TikTok file upload error [${status}]:`, detail);
-    throw new Error(`TikTok Upload Error [${status}]: ${detail}`);
+    if (status === 401 || status === 403) {
+      throw new UnrecoverableError(`Instagram auth failed (${status}). Reconnect your Instagram account.`);
+    }
+    throw err;
   }
 }
 
-async function uploadToInstagram(videoPath, title, account) {
-  // Instagram requires a public URL — you need to upload to storage first.
-  // Implement uploadToStorage() using Supabase Storage or S3.
-  throw new Error(
-    "Instagram upload requires a public video URL. Implement uploadToStorage() using Supabase Storage."
-  );
-}
+// ── Routes ────────────────────────────────────────────────────────────────────
 
-// ── ROUTES ────────────────────────────────────────────────────────────────────
-
-// GET /api/reposts/queue-health
-router.get("/queue-health", authenticateToken, async (req, res) => {
+router.get("/queue-health", authenticateToken, async (_req, res) => {
   try {
     const [waiting, active, completed, failed, delayed] = await Promise.all([
       repostQueue.getWaitingCount(),
@@ -486,65 +364,66 @@ router.get("/queue-health", authenticateToken, async (req, res) => {
       repostQueue.getFailedCount(),
       repostQueue.getDelayedCount(),
     ]);
-    res.json({ waiting, active, completed, failed, delayed, workerEnabled: process.env.DISABLE_WORKERS !== 'true' });
+    res.json({ waiting, active, completed, failed, delayed, workerEnabled: process.env.DISABLE_WORKERS !== "true" });
   } catch (err) {
-    res.json({ error: err.message, workerEnabled: process.env.DISABLE_WORKERS !== 'true' });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// POST /api/reposts
 router.post("/", authenticateToken, async (req, res) => {
   const { sourceVideoId, sourceVideoUrl, sourcePlatform, title, thumbnailUrl, destinations, scheduledFor } = req.body;
 
   if (!destinations?.length) return res.status(400).json({ error: "At least one destination required" });
 
-  // Plan/trial check
+  // Plan enforcement
   const { data: user } = await supabase.from("users").select("plan, trial_ends_at").eq("id", req.user.userId).single();
   const onTrial = user?.trial_ends_at && new Date(user.trial_ends_at) > new Date();
-  const isPro = user?.plan === "pro" || user?.plan === "team";
+  const isPro   = user?.plan === "pro" || user?.plan === "team";
 
   if (!isPro && !onTrial) {
-    // Free plan: 3 reposts/month
-    const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0,0,0,0);
-    const { count } = await supabase.from("reposts").select("id", { count: "exact" })
-      .eq("user_id", req.user.userId).gte("created_at", monthStart.toISOString());
-    if (count >= 3) return res.status(403).json({ error: "Free plan limit reached. Upgrade to Pro." });
+    const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
+    const { count } = await supabase.from("reposts")
+      .select("id", { count: "exact" })
+      .eq("user_id", req.user.userId)
+      .gte("created_at", monthStart.toISOString());
+    if (count >= 3) return res.status(403).json({ error: "Free plan limit reached (3 reposts/month). Upgrade to Pro." });
   }
 
-  // For library uploads, no source account needed (direct URL from Supabase Storage)
   let sourceAccountId = null;
-  if (sourcePlatform !== 'library') {
+  if (sourcePlatform !== "library") {
     const { data: sourceAccount } = await supabase
-      .from("platform_accounts").select("id").eq("user_id", req.user.userId).eq("platform", sourcePlatform).single();
+      .from("platform_accounts").select("id")
+      .eq("user_id", req.user.userId).eq("platform", sourcePlatform).single();
     if (!sourceAccount) return res.status(404).json({ error: `${sourcePlatform} account not connected` });
     sourceAccountId = sourceAccount.id;
   }
 
   const { data: repost, error } = await supabase.from("reposts").insert({
-    user_id: req.user.userId,
+    user_id:          req.user.userId,
     source_account_id: sourceAccountId,
-    source_video_id: sourceVideoId,
+    source_video_id:  sourceVideoId,
     source_video_url: sourceVideoUrl,
     title,
-    thumbnail_url: thumbnailUrl,
+    thumbnail_url:    thumbnailUrl,
     destinations,
-    scheduled_for: scheduledFor || null,
-    status: scheduledFor ? "scheduled" : "pending",
+    scheduled_for:    scheduledFor || null,
+    status:           scheduledFor ? "scheduled" : "pending",
   }).select().single();
 
   if (error) return res.status(500).json({ error: error.message });
 
   const delay = scheduledFor ? Math.max(0, new Date(scheduledFor) - Date.now()) : 0;
-  const job = await repostQueue.add("repost", { repostId: repost.id }, { delay, attempts: 3, backoff: { type: "exponential", delay: 5000 } });
-
+  const job   = await repostQueue.add(
+    "repost",
+    { repostId: repost.id },
+    { delay, attempts: 3, backoff: { type: "exponential", delay: 5000 } }
+  );
   await supabase.from("reposts").update({ job_id: job.id }).eq("id", repost.id);
   res.json(repost);
 });
 
-// GET /api/reposts
 router.get("/", authenticateToken, async (req, res) => {
-  const { data, error } = await supabase
-    .from("reposts")
+  const { data, error } = await supabase.from("reposts")
     .select("*")
     .eq("user_id", req.user.userId)
     .order("created_at", { ascending: false })
@@ -553,18 +432,17 @@ router.get("/", authenticateToken, async (req, res) => {
   res.json(data);
 });
 
-// DELETE /api/reposts/:id
 router.delete("/:id", authenticateToken, async (req, res) => {
   await supabase.from("reposts").delete().eq("id", req.params.id).eq("user_id", req.user.userId);
   res.json({ ok: true });
 });
 
-// POST /api/reposts/:id/retry
 router.post("/:id/retry", authenticateToken, async (req, res) => {
-  const { data: repost } = await supabase.from("reposts").select("*").eq("id", req.params.id).eq("user_id", req.user.userId).single();
+  const { data: repost } = await supabase.from("reposts")
+    .select("*").eq("id", req.params.id).eq("user_id", req.user.userId).single();
   if (!repost) return res.status(404).json({ error: "Not found" });
   await supabase.from("reposts").update({ status: "pending", error: null }).eq("id", req.params.id);
-  await repostQueue.add("repost", { repostId: repost.id }, { attempts: 3 });
+  await repostQueue.add("repost", { repostId: repost.id }, { attempts: 3, backoff: { type: "exponential", delay: 5000 } });
   res.json({ ok: true });
 });
 

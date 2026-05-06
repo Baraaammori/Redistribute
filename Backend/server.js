@@ -1,14 +1,13 @@
 require("dotenv").config();
 const express = require("express");
-const cors = require("cors");
+const cors    = require("cors");
 
 const app = express();
 
-// ── TIKTOK VERIFICATION (must be FIRST, before any other middleware) ──────────
+// ── TIKTOK VERIFICATION (must be first, before any other middleware) ──────────
 const tiktokStr = "tiktok-developers-site-verification=bghKrrlfRtF6BKysbfBCv0nrPTK70xQW";
 app.use((req, res, next) => {
   if (req.path.toLowerCase().includes("tiktok-developers-site-verification")) {
-    console.log(`🔍 TikTok verification hit: ${req.method} ${req.originalUrl}`);
     return res.status(200).type("text/plain").send(tiktokStr);
   }
   next();
@@ -26,29 +25,35 @@ app.use("/api/stripe/webhook", express.raw({ type: "application/json" }));
 app.use(express.json());
 
 // ── ROUTES ────────────────────────────────────────────────────────────────────
-app.use("/api/auth",      require("./routes/auth"));
-app.use("/api/admin",     require("./routes/admin"));
-app.use("/api/shop",      require("./routes/shop"));
-app.use("/api/accounts",  require("./routes/accounts"));
-app.use("/api/videos",    require("./routes/videos"));
-app.use("/api/reposts",   require("./routes/reposts"));
-app.use("/api/stripe",    require("./routes/stripe"));
-app.use("/api/upload",    require("./routes/upload"));
-app.use("/api/ai-clip",   require("./routes/ai-clip"));
-app.use("/api/captions",  require("./routes/captions"));
-app.use("/api/best-time", require("./routes/besttime"));
-app.use("/api/broll",     require("./routes/broll"));
-app.use("/api/settings",  require("./routes/settings"));
+app.use("/api/auth",          require("./routes/auth"));
+app.use("/api/accounts",      require("./routes/accounts"));
+app.use("/api/videos",        require("./routes/videos"));
+app.use("/api/reposts",       require("./routes/reposts"));
+app.use("/api/stripe",        require("./routes/stripe"));
+app.use("/api/upload",        require("./routes/upload"));
+app.use("/api/best-time",     require("./routes/besttime"));
+app.use("/api/auto-republish",require("./routes/autoRepublish"));
 
-// ── DISTRIBUTION WORKER (processes upload → platform jobs) ────────────────────
+// ── WORKERS & POLLERS ─────────────────────────────────────────────────────────
 require("./lib/distributionWorker");
 
-// ── ANALYTICS POLLER + MONTHLY RESET ─────────────────────────────────────────
-const { startAnalyticsPoller } = require("./lib/analyticsPoller");
+const { startAnalyticsPoller }     = require("./lib/analyticsPoller");
+const { startAutoRepublishPoller } = require("./workers/autoRepublishPoller");
 startAnalyticsPoller();
+startAutoRepublishPoller();
 
 // ── HEALTH ────────────────────────────────────────────────────────────────────
 app.get("/api/health", (_req, res) => res.json({ status: "ok", ts: new Date() }));
+
+// ── ERROR HANDLER ─────────────────────────────────────────────────────────────
+app.use((err, _req, res, _next) => {
+  const isDev = process.env.NODE_ENV !== "production";
+  console.error("Unhandled error:", err.message);
+  res.status(err.status || 500).json({
+    error: err.message || "Internal server error",
+    ...(isDev ? { stack: err.stack } : {}),
+  });
+});
 
 // ── START ─────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;

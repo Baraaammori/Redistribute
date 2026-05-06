@@ -260,4 +260,15 @@ router.get("/instagram/callback", async (req, res) => {
   }
 });
 
+// ── GET /api/accounts/auto-republish-status ───────────────────────────────────
+// Returns auto-republish settings for all connected platforms in one call.
+router.get("/auto-republish-status", authenticateToken, async (req, res) => {
+  const { data, error } = await supabase
+    .from("platform_accounts")
+    .select("platform, auto_republish_enabled, auto_republish_targets, last_polled_at")
+    .eq("user_id", req.user.userId);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
 module.exports = router;
