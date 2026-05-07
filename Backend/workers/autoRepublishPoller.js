@@ -227,18 +227,18 @@ function startAutoRepublishPoller() {
     return;
   }
 
-  // Register the repeatable job (runs every 1 minute)
+  // Register the repeatable job (runs every 10 minutes)
   pollQueue.add(
     "poll",
     {},
     {
-      repeat:   { cron: "*/1 * * * *" },
+      repeat:   { cron: "*/10 * * * *" },
       jobId:    "auto-republish-poller",
       removeOnComplete: { count: 5 },
       removeOnFail:     { count: 10 },
     }
   ).then(() => {
-    console.log("✅ [autoRepublish] Poller scheduled (every 1 min)");
+    console.log("✅ [autoRepublish] Poller scheduled (every 10 min)");
   }).catch(err => {
     console.error("❌ [autoRepublish] Failed to schedule poller:", err.message);
   });
