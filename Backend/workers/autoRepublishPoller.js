@@ -208,10 +208,11 @@ async function runPollCycle() {
     } catch (err) {
       console.error(`[autoRepublish] Error processing account ${account.id} (${account.platform}): ${err.message}`);
       // Update last_polled_at even on error so the next cycle is aware
-      await supabase.from("platform_accounts")
-        .update({ last_polled_at: new Date().toISOString() })
-        .eq("id", account.id)
-        .catch(() => {});
+      try {
+        await supabase.from("platform_accounts")
+          .update({ last_polled_at: new Date().toISOString() })
+          .eq("id", account.id);
+      } catch(e) {}
     }
   }
 }
