@@ -79,12 +79,36 @@ async function refreshTikTokToken(account) {
       { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
     );
 
-    if (!data.access_token) throw new Error("TikTok token refresh: no access_token in response");
+    // Always log raw response so future token issues are instantly diagnosable
+    console.error("[tokenRefresh] TikTok raw response:", JSON.stringify(data));
+
+    // TikTok returns HTTP 200 with an error body instead of a non-2xx status
+    if (data.error) {
+      const desc = data.error_description || data.error;
+      const reconnectCodes = ["invalid_grant", "refresh_token_not_found", "access_token_invalid", "10005"];
+      if (reconnectCodes.some(c => String(data.error).includes(c) || desc.includes(c))) {
+        throw new UnrecoverableError(
+          `TikTok refresh token is invalid or expired (${desc}). ` +
+          `Go to Accounts → Disconnect → Reconnect TikTok.`
+        );
+      }
+      throw new UnrecoverableError(`TikTok token refresh error: ${desc}`);
+    }
+
+    if (!data.access_token) {
+      // Unrecoverable — retrying the same expired/bad token will never produce a different result
+      throw new UnrecoverableError(
+        `TikTok token refresh: no access_token in response. ` +
+        `Full response: ${JSON.stringify(data)}. ` +
+        `Go to Accounts → Disconnect → Reconnect TikTok.`
+      );
+    }
 
     const updates = {
       access_token:  data.access_token,
+      // TikTok v2 rotates the refresh token on every refresh — always save the new one
       refresh_token: data.refresh_token || account.refresh_token,
-      expires_at:    new Date(Date.now() + data.expires_in * 1000),
+      expires_at:    new Date(Date.now() + (data.expires_in || 86400) * 1000),
     };
     await supabase.from("platform_accounts").update(updates).eq("id", account.id);
 
@@ -94,7 +118,9 @@ async function refreshTikTokToken(account) {
 
     return account;
   } catch (err) {
+    if (err instanceof UnrecoverableError) throw err;
     const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    console.error("[tokenRefresh] TikTok HTTP error response:", detail);
     if (detail.includes("invalid_grant") || detail.includes("access_token_invalid")) {
       throw new UnrecoverableError(`TikTok account needs reconnection. Go to Accounts → Reconnect TikTok.`);
     }

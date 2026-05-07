@@ -4,11 +4,18 @@ const os = require('os');
 const { execFile } = require('child_process');
 const { UnrecoverableError } = require('bullmq');
 
-/**
- * Video Downloader with Anti-Bot Evasion
- * Supports YouTube and TikTok URLs.
- * Implements proxy rotation, user-agent spoofing, and cookie management.
- */
+// Errors where the video itself is the problem — retrying will never help
+const PERMANENT_PATTERNS = [
+  'Video unavailable',
+  'This video is private',
+  'This video has been removed',
+  'not available in your country',
+  'This video requires payment',
+  'Music Premium members',
+  'This account has been terminated',
+  'The uploader has not made this video available',
+];
+
 class VideoDownloader {
   constructor() {
     this.binPath = this._getBinPath();
@@ -21,9 +28,6 @@ class VideoDownloader {
     return path.join(__dirname, '..', 'bin', filename);
   }
 
-  /**
-   * Get the next proxy in the rotation pool
-   */
   _getNextProxy() {
     if (this.proxies.length === 0) return null;
     const proxy = this.proxies[this.proxyIndex];
@@ -31,157 +35,154 @@ class VideoDownloader {
     return proxy;
   }
 
-  /**
-   * Builds the yt-dlp arguments with all anti-bot evasions
-   */
-  /**
-   * Detect if URL is a TikTok link
-   */
   _isTikTokUrl(url) {
     return /tiktok\.com/.test(url || '');
   }
 
-  _buildArgs(url, dest, options = {}) {
+  /**
+   * Returns the path to a writable cookies file, or null if none configured.
+   * Supports two env vars:
+   *   YOUTUBE_COOKIES_TXT  — the raw Netscape cookie file content (set as a secret)
+   *   YOUTUBE_COOKIES_FILE — path to an existing cookies.txt file on disk
+   *
+   * yt-dlp needs write access to the cookies file (it updates expiry times).
+   * We copy to /tmp/ which is always writable, even on read-only secret mounts.
+   */
+  _getCookiePath() {
+    const tmpPath = path.join(os.tmpdir(), 'yt_cookies.txt');
+
+    if (process.env.YOUTUBE_COOKIES_TXT) {
+      // Write the raw cookie content from the env secret once per process
+      if (!fs.existsSync(tmpPath)) {
+        fs.writeFileSync(tmpPath, process.env.YOUTUBE_COOKIES_TXT, 'utf8');
+        console.log('[youtube-dl] Wrote YOUTUBE_COOKIES_TXT to', tmpPath);
+      }
+      return tmpPath;
+    }
+
+    if (process.env.YOUTUBE_COOKIES_FILE && fs.existsSync(process.env.YOUTUBE_COOKIES_FILE)) {
+      try {
+        fs.copyFileSync(process.env.YOUTUBE_COOKIES_FILE, tmpPath);
+        return tmpPath;
+      } catch (err) {
+        console.warn('[youtube-dl] Failed to copy cookie file:', err.message);
+      }
+    }
+
+    return null;
+  }
+
+  _buildArgs(url, dest, cookiePath) {
     const args = [
       url,
-      '-f', 'bestvideo+bestaudio/best',
-      '--merge-output-format', 'mkv',
-      '-o', dest,
+      '-f', 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+      '--merge-output-format', 'mp4',
       '--no-playlist',
       '--no-check-certificates',
       '--socket-timeout', '30',
       '--retries', '3',
       '--no-warnings',
+      '-o', dest,
     ];
 
-    // YouTube-specific extractor args (skip for TikTok)
+    // Use iOS + Android player clients only.
+    // IMPORTANT: never include 'web' here — yt-dlp's web client tries to
+    // read Chrome browser cookies for authentication, which throws
+    // "Could not copy Chrome cookie database" on any server with no browser installed.
     if (!this._isTikTokUrl(url)) {
-      args.push('--extractor-args', 'youtube:player_client=ios,android,web');
+      args.push('--extractor-args', 'youtube:player_client=ios,android');
     }
 
-    // 1. Cookie Authentication (Primary bypass)
-    const cookieFile = process.env.YOUTUBE_COOKIES_FILE;
-    if (cookieFile && fs.existsSync(cookieFile)) {
-      // yt-dlp needs write access to the cookies file, but /etc/secrets is read-only.
-      // Copy it to /tmp/ which is always writable.
-      const writableCookieFile = path.join(os.tmpdir(), 'youtube_cookies_writable.txt');
-      
-      try {
-        fs.copyFileSync(cookieFile, writableCookieFile);
-        console.log(`🍪 [youtube-dl] Copied cookies to writable path: ${writableCookieFile}`);
-        args.push('--cookies', writableCookieFile);
-      } catch (err) {
-        console.error(`⚠️ [youtube-dl] Failed to copy cookies to writable path: ${err.message}`);
-        // Fallback to original just in case
-        args.push('--cookies', cookieFile);
-      }
-    } else if (options.useBrowserCookies && this._canUseBrowserCookies()) {
-      // Only use browser cookies on local desktop with Chrome CLOSED
-      console.log(`🍪 [youtube-dl] Attempting browser cookies (local desktop only)`);
-      args.push('--cookies-from-browser', 'chrome');
+    // Cookie file authentication — never --cookies-from-browser
+    if (cookiePath) {
+      args.push('--cookies', cookiePath);
     }
 
-    // 2. Proxy Rotation (Secondary bypass)
     const proxy = this._getNextProxy();
     if (proxy) {
-      console.log(`🌐 [youtube-dl] Routing through proxy: ${proxy.split('@')[1] || proxy}`);
       args.push('--proxy', proxy);
     }
 
-    // 3. Header Spoofing
     args.push('--add-header', 'Accept-Language:en-US,en;q=0.9');
-    
+
     return args;
   }
 
   /**
-   * Checks if an error is an anti-bot challenge
+   * Download a YouTube or TikTok video to /tmp.
+   * Strategy:
+   *   1. Clean download (no cookies) — works for most public videos
+   *   2. If step 1 fails: retry with cookies.txt (YOUTUBE_COOKIES_TXT or YOUTUBE_COOKIES_FILE)
+   *   3. If both fail: throw UnrecoverableError (retrying won't help)
+   *
+   * Download failures are always UnrecoverableError — the video URL won't
+   * suddenly become accessible on a BullMQ retry. Only upload failures
+   * (transient 429/503) should trigger retries.
    */
-  _detectAntiBotError(stderr) {
-    if (!stderr) return false;
-    const botPatterns = [
-      'Sign in to confirm you\'re not a bot',
-      'HTTP Error 429',
-      'Rate-limit exceeded',
-      'Video unavailable',
-      'Unable to download video',
-    ];
-    return botPatterns.some(pattern => stderr.includes(pattern));
-  }
-
-  /**
-   * Detect if browser cookies are safe to use.
-   * NEVER use on servers, Docker, CI, or headless environments.
-   */
-  _canUseBrowserCookies() {
-    // Never in Docker
-    if (fs.existsSync('/.dockerenv')) return false;
-    // Never if explicitly disabled
-    if (process.env.NO_BROWSER_COOKIES === 'true') return false;
-    // Never on Linux servers (headless)
-    if (os.platform() === 'linux' && !process.env.DISPLAY) return false;
-    // Only on Windows/Mac local dev
-    return os.platform() === 'win32' || os.platform() === 'darwin';
-  }
-
-  /**
-   * Main download method with fallback strategies
-   */
-  async download(url, id, attempt = 1) {
-    const dest = path.join(os.tmpdir(), `redistribute_${id}_ytdlp.mkv`);
-
+  async download(url, id) {
     if (!fs.existsSync(this.binPath)) {
-      throw new Error(`yt-dlp binary not found at ${this.binPath}. Run npm run build.`);
+      throw new Error(`yt-dlp binary not found at ${this.binPath}`);
     }
 
-    // Only try browser cookies on retry IF we're on a local desktop AND no cookies file
-    let options = {};
-    if (attempt > 1 && !process.env.YOUTUBE_COOKIES_FILE && this._canUseBrowserCookies()) {
-      options.useBrowserCookies = true;
+    const dest = path.join(os.tmpdir(), `redistribute_${id}_ytdlp.mp4`);
+    if (fs.existsSync(dest)) fs.unlinkSync(dest);
+
+    // Step 1 — clean (no cookies)
+    try {
+      await this._exec(url, dest, null);
+      return dest;
+    } catch (err) {
+      if (err instanceof UnrecoverableError) throw err;
+      console.warn(`[youtube-dl] Clean download failed: ${err.message}`);
     }
 
-    const args = this._buildArgs(url, dest, options);
+    // Step 2 — cookies.txt fallback
+    const cookiePath = this._getCookiePath();
+    if (cookiePath) {
+      if (fs.existsSync(dest)) fs.unlinkSync(dest);
+      try {
+        await this._exec(url, dest, cookiePath);
+        return dest;
+      } catch (err) {
+        if (err instanceof UnrecoverableError) throw err;
+        console.warn(`[youtube-dl] Cookie download failed: ${err.message}`);
+      }
+    }
 
+    // Step 3 — permanent failure
+    if (fs.existsSync(dest)) fs.unlinkSync(dest);
+    throw new UnrecoverableError(
+      `Video download failed after all attempts. The video may be private, ` +
+      `age-restricted, or region-blocked. ` +
+      `To download bot-protected videos, set YOUTUBE_COOKIES_TXT in your environment.`
+    );
+  }
+
+  _exec(url, dest, cookiePath) {
+    const args = this._buildArgs(url, dest, cookiePath);
     return new Promise((resolve, reject) => {
-      console.log(`📥 [youtube-dl] Downloading: ${url} (Attempt ${attempt})`);
-      
-      execFile(this.binPath, args, {
-        timeout: 120000,
-        maxBuffer: 1024 * 1024 * 10,
-      }, async (err, stdout, stderr) => {
-        
+      console.log(`[youtube-dl] Downloading: ${url}${cookiePath ? ' (with cookies)' : ''}`);
+      execFile(this.binPath, args, { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 }, (err, _stdout, stderr) => {
         if (err) {
           if (fs.existsSync(dest)) fs.unlinkSync(dest);
-          const stderrStr = stderr || err.message || '';
-          
-          if (this._detectAntiBotError(stderrStr)) {
-            console.error(`❌ [youtube-dl] Anti-bot challenge detected!`);
-            
-            // If we have proxies, we might want to throw a normal error to trigger a BullMQ retry 
-            // which will pick a new proxy on the next attempt.
-            if (this.proxies.length > 0 && attempt < 3) {
-               return reject(new Error(`YouTube blocked request. Retrying with new proxy...`));
-            }
-            
-            // Exhausted all options -> Permanent failure
-            return reject(new UnrecoverableError(`YouTube blocked download (Anti-bot challenge). Provide a valid cookies.txt file or residential proxy.`));
+          const msg = (stderr || err.message || '').trim();
+          if (PERMANENT_PATTERNS.some(p => msg.includes(p))) {
+            return reject(new UnrecoverableError(`Video unavailable: ${msg.slice(-200)}`));
           }
-          
-          return reject(new Error(`yt-dlp download failed: ${stderrStr.slice(-300)}`));
+          return reject(new Error(`yt-dlp: ${msg.slice(-300)}`));
         }
 
         if (!fs.existsSync(dest)) {
-          return reject(new Error('yt-dlp completed but output file not found'));
+          return reject(new Error('yt-dlp finished but output file not found'));
         }
 
         const size = fs.statSync(dest).size;
-        
-        if (size < 10000) {
-          if (fs.existsSync(dest)) fs.unlinkSync(dest);
-          return reject(new UnrecoverableError(`Output file too small (${size} bytes) — likely an HTML challenge page.`));
+        if (size < 10_000) {
+          fs.unlinkSync(dest);
+          return reject(new UnrecoverableError(`Output file too small (${size} bytes) — likely an error page`));
         }
 
-        console.log(`✅ [youtube-dl] Download complete: ${size} bytes`);
+        console.log(`[youtube-dl] Done: ${size} bytes`);
         resolve(dest);
       });
     });

@@ -49,7 +49,7 @@ if (process.env.DISABLE_WORKERS !== "true") {
     try {
       // 1. Download source video
       console.log(`📥 ${label} Downloading: ${repost.source_video_url?.slice(0, 80)}…`);
-      videoPath = await downloadVideo(repost.source_video_url, repost.id, job.attemptsMade);
+      videoPath = await downloadVideo(repost.source_video_url, repost.id);
       const dlSize = fs.statSync(videoPath).size;
       console.log(`📥 ${label} Downloaded ${dlSize} bytes`);
 
@@ -142,9 +142,9 @@ if (process.env.DISABLE_WORKERS !== "true") {
 function isYouTubeUrl(url) { return /(?:youtube\.com\/(?:watch|shorts|embed)|youtu\.be\/)/.test(url || ""); }
 function isTikTokUrl(url)  { return /tiktok\.com/.test(url || ""); }
 
-async function downloadVideo(url, id, attempt = 0) {
+async function downloadVideo(url, id) {
   if (isYouTubeUrl(url) || isTikTokUrl(url)) {
-    return youtubeDownloader.download(url, id, attempt + 1);
+    return youtubeDownloader.download(url, id);
   }
   return downloadDirect(url, id);
 }
@@ -447,3 +447,4 @@ router.post("/:id/retry", authenticateToken, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.repostQueue = repostQueue;
