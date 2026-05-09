@@ -4,7 +4,7 @@ import { ArrowRight } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 const NAV_ITEMS: [string, string][] = [
-  ['/about',   'About'],
+  ['/about', 'About'],
   ['/pricing', 'Pricing'],
   ['/contact', 'Contact'],
 ];
@@ -24,7 +24,7 @@ export default function Navbar() {
       className="flex items-center gap-8 sticky top-0 z-50"
       style={{
         padding: '20px 56px',
-        background: 'rgba(245,244,240,0.85)',
+        background: 'rgba(255, 255, 255, 1)',
         backdropFilter: 'blur(20px)',
         borderBottom: '1px solid rgba(0,0,0,0.06)',
       }}
