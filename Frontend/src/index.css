@@ -12,8 +12,8 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
-  ::-webkit-scrollbar { width: 4px; height: 4px; }
-  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 4px; }
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 10px; }
   ::-webkit-scrollbar-track { background: transparent; }
   input, textarea, button { font-family: inherit; }
   button { cursor: pointer; }
@@ -21,7 +21,13 @@
 
 @layer utilities {
   .text-gradient-brand {
-    background: linear-gradient(135deg, #6C47FF, #0ED2A0);
+    background: linear-gradient(135deg, #8B6AFF 0%, #0ED2A0 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .text-gradient-purple {
+    background: linear-gradient(135deg, #6C47FF, #8B6AFF);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -30,4 +36,34 @@
     background-image: radial-gradient(circle, rgba(255,255,255,0.10) 1px, transparent 1px);
     background-size: 24px 24px;
   }
+  .bg-grid-fine {
+    background-image:
+      linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+  .card-hover {
+    transition: transform 220ms cubic-bezier(0.16,1,0.3,1),
+                box-shadow 220ms ease,
+                border-color 220ms ease;
+  }
+  .card-hover:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 40px rgba(0,0,0,0.50);
+  }
+  .btn-press:active { transform: scale(0.96); }
+  .glow-purple { box-shadow: 0 0 24px rgba(108,71,255,0.35); }
+  .glow-teal   { box-shadow: 0 0 20px rgba(14,210,160,0.22); }
+  .glass {
+    background: rgba(15,15,23,0.75);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+  /* Stagger delays for list children */
+  .stagger > *:nth-child(1)  { animation-delay: 0ms }
+  .stagger > *:nth-child(2)  { animation-delay: 60ms }
+  .stagger > *:nth-child(3)  { animation-delay: 120ms }
+  .stagger > *:nth-child(4)  { animation-delay: 180ms }
+  .stagger > *:nth-child(5)  { animation-delay: 240ms }
+  .stagger > *:nth-child(6)  { animation-delay: 300ms }
 }

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Routes, Route, useNavigate } from 'react-router-dom';
 import {
-  Upload, Scissors, Send, Repeat, Check, AlertTriangle,
-  Clock, Zap, RefreshCw,
+  Upload, Send, Repeat, Check, AlertTriangle,
+  Clock, Zap, RefreshCw, TrendingUp, Film, ArrowRight,
+  Wifi, WifiOff,
 } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Sidebar } from '../../components/ui/Sidebar';
@@ -11,143 +12,262 @@ import { Card } from '../../components/ui/Card';
 import { StatusBadge } from '../../components/ui/StatusBadge';
 import { Btn } from '../../components/ui/Btn';
 import { Thumb } from '../../components/ui/Thumb';
-import { PlatformDot } from '../../components/ui/PlatformDot';
+import { PlatformDot, PlatformId } from '../../components/ui/PlatformDot';
 import UploadCenter  from './UploadCenter';
 import VideoLibrary  from './VideoLibrary';
 import NewRepost     from './NewRepost';
 import AutoRepublish from './AutoRepublish';
 import SettingsPage  from './Settings';
 
-// ── Overview page ─────────────────────────────────────────────────────────────
+/* ── helpers ────────────────────────────────────────────────────────────────── */
+function getGreeting(): string {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function formatDate(): string {
+  return new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+}
+
+/* ── Overview page ─────────────────────────────────────────────────────────── */
 function Overview() {
   const navigate = useNavigate();
-  const [stats, setStats]   = useState({ uploads: 0, clips: 0, distributions: 0, reposts: 0, completed: 0, failed: 0 });
-  const [videos, setVideos] = useState<any[]>([]);
+  const [stats, setStats]     = useState({ uploads: 0, clips: 0, distributions: 0, reposts: 0, completed: 0, failed: 0 });
+  const [videos, setVideos]   = useState<any[]>([]);
   const [bestTime, setBestTime] = useState<string | null>(null);
   const [autoActive, setAutoActive] = useState(false);
+  const [accounts, setAccounts] = useState<any[]>([]);
 
   useEffect(() => {
     api.upload.list().then((vs: any[]) => {
-      setVideos(vs.slice(0, 4));
+      setVideos(vs.slice(0, 5));
       setStats(s => ({ ...s, uploads: vs.length, distributions: vs.length * 2 }));
     }).catch(() => {});
     api.bestTime.get().then((d: any) => d?.best_hour != null && setBestTime(`${d.best_hour}:00`)).catch(() => {});
     api.accounts.autoRepublishStatus().then((arr: any[]) => setAutoActive(arr.some((a: any) => a.enabled))).catch(() => {});
+    api.accounts.list().then((d: any[]) => setAccounts(d ?? [])).catch(() => {});
   }, []);
 
   const HUE_MAP: Record<string, string> = { done: 'teal', processing: 'blue', failed: 'pink', pending: 'amber' };
+  const PLATFORMS: PlatformId[] = ['youtube', 'tiktok', 'instagram'];
 
   return (
     <main className="flex-1 overflow-auto" style={{ background: '#08080E' }}>
-      <div className="flex flex-col gap-6 p-9">
-        {/* Header */}
-        <div className="flex items-start justify-between gap-6">
-          <div>
-            <h1 className="font-display font-extrabold m-0" style={{ fontSize: 28, letterSpacing: '-0.04em', color: '#F0EFF8' }}>
-              Overview
-            </h1>
-            <div className="flex items-center gap-2.5 mt-2 font-sans" style={{ fontSize: 13, color: 'rgba(240,239,248,0.50)' }}>
-              <span>Welcome back.</span>
-              <StatusBadge status="pro" />
+      <div className="flex flex-col gap-6 p-8">
+
+        {/* Welcome banner */}
+        <div
+          className="relative rounded-2xl overflow-hidden animate-enter"
+          style={{
+            background: 'linear-gradient(135deg, rgba(108,71,255,0.12) 0%, rgba(14,210,160,0.06) 100%)',
+            border: '1px solid rgba(108,71,255,0.18)',
+            padding: '28px 32px',
+          }}
+        >
+          {/* Ambient glow */}
+          <div className="absolute inset-0 pointer-events-none" style={{
+            background: 'radial-gradient(ellipse at 0% 0%, rgba(108,71,255,0.15), transparent 60%), radial-gradient(ellipse at 100% 100%, rgba(14,210,160,0.08), transparent 60%)',
+          }} />
+          <div className="relative flex items-center justify-between gap-6">
+            <div>
+              <div className="font-sans font-medium" style={{ fontSize: 13, color: 'rgba(240,239,248,0.50)', marginBottom: 6 }}>
+                {formatDate()}
+              </div>
+              <h1 className="font-display font-extrabold m-0" style={{ fontSize: 30, letterSpacing: '-0.04em', color: '#F0EFF8', lineHeight: 1.1 }}>
+                {getGreeting()} <span className="text-gradient-brand">— let's distribute.</span>
+              </h1>
+              <div className="flex items-center gap-3 mt-3">
+                <StatusBadge status="pro" />
+                {autoActive && (
+                  <span
+                    className="inline-flex items-center gap-1.5 font-sans font-medium rounded-full"
+                    style={{ fontSize: 12, color: '#0ED2A0', background: 'rgba(14,210,160,0.10)', padding: '3px 10px 3px 8px' }}
+                  >
+                    <span className="rounded-full animate-pulse2" style={{ width: 5, height: 5, background: '#0ED2A0', flexShrink: 0 }} />
+                    Auto-republish active
+                  </span>
+                )}
+              </div>
             </div>
+            <Btn kind="primary" icon={Upload} onClick={() => navigate('/dashboard/upload')}>
+              Upload video
+            </Btn>
           </div>
-          <Btn kind="primary" icon={Upload} onClick={() => navigate('/dashboard/upload')}>Upload video</Btn>
         </div>
 
-        {/* Stats */}
-        <div className="grid gap-3.5" style={{ gridTemplateColumns: 'repeat(6, 1fr)' }}>
-          <StatCard icon={Upload}        color="#6C47FF" colorBg="rgba(108,71,255,0.12)" value={stats.uploads}       label="Uploads"       trend="+8 wk" />
-          <StatCard icon={Scissors}      color="#0ED2A0" colorBg="rgba(14,210,160,0.10)" value={stats.clips}         label="Clips"         trend="+24 wk" />
-          <StatCard icon={Send}          color="#4F8EF0" colorBg="rgba(79,142,240,0.10)" value={stats.distributions} label="Distributions" trend="+18 wk" />
-          <StatCard icon={Repeat}        color="#F5A623" colorBg="rgba(245,166,35,0.10)" value={stats.reposts}       label="Reposts"       trend="+12 wk" />
-          <StatCard icon={Check}         color="#0ED2A0" colorBg="rgba(14,210,160,0.10)" value={stats.completed}     label="Completed"     trend="98.4%" />
-          <StatCard icon={AlertTriangle} color="#F04F4F" colorBg="rgba(240,79,79,0.10)"  value={stats.failed}        label="Failed"        trend="-3 wk" />
+        {/* Platform health row */}
+        <div>
+          <div className="font-sans font-semibold uppercase mb-3" style={{ fontSize: 11, letterSpacing: '0.08em', color: 'rgba(240,239,248,0.30)' }}>
+            Platform connections
+          </div>
+          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+            {PLATFORMS.map((pid, i) => {
+              const acc = accounts.find((a: any) => a.platform === pid);
+              const connected = !!acc && acc.status !== 'paused' && !acc.token_expired;
+              const expired = acc?.status === 'paused' || acc?.token_expired;
+              return (
+                <div
+                  key={pid}
+                  className="flex items-center gap-3 rounded-xl animate-enter card-hover cursor-pointer"
+                  style={{
+                    background: '#0F0F17',
+                    border: `1px solid ${connected ? 'rgba(14,210,160,0.18)' : expired ? 'rgba(245,166,35,0.20)' : 'rgba(255,255,255,0.07)'}`,
+                    padding: '14px 16px',
+                    animationDelay: `${i * 60}ms`,
+                  }}
+                  onClick={() => navigate('/dashboard/accounts')}
+                >
+                  <PlatformDot id={pid} size={38} radius={10} />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-sans font-semibold" style={{ fontSize: 13, color: '#F0EFF8', textTransform: 'capitalize' }}>{pid}</div>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      {connected ? (
+                        <>
+                          <span className="rounded-full animate-pulse2" style={{ width: 5, height: 5, background: '#0ED2A0', flexShrink: 0 }} />
+                          <span className="font-mono" style={{ fontSize: 10, color: '#0ED2A0' }}>Connected</span>
+                        </>
+                      ) : expired ? (
+                        <>
+                          <span className="rounded-full" style={{ width: 5, height: 5, background: '#F5A623', flexShrink: 0 }} />
+                          <span className="font-mono" style={{ fontSize: 10, color: '#F5A623' }}>Token expired</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="rounded-full" style={{ width: 5, height: 5, background: 'rgba(240,239,248,0.20)', flexShrink: 0 }} />
+                          <span className="font-mono" style={{ fontSize: 10, color: 'rgba(240,239,248,0.30)' }}>Not connected</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  {connected ? (
+                    <Wifi size={14} style={{ color: '#0ED2A0', flexShrink: 0 }} />
+                  ) : (
+                    <WifiOff size={14} style={{ color: 'rgba(240,239,248,0.20)', flexShrink: 0 }} />
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
 
-        {/* Auto-republish banner */}
-        {autoActive && (
-          <div
-            className="flex items-center gap-4 rounded-xl px-5 py-4"
-            style={{ background: 'rgba(108,71,255,0.06)', border: '1px solid rgba(255,255,255,0.07)', borderLeft: '3px solid #6C47FF' }}
-          >
-            <div className="flex items-center justify-center rounded-lg flex-shrink-0" style={{ width: 34, height: 34, background: 'rgba(108,71,255,0.12)', color: '#6C47FF' }}>
-              <Repeat size={16} />
-            </div>
-            <div className="flex-1">
-              <div className="font-sans font-semibold" style={{ fontSize: 13, color: '#F0EFF8' }}>Auto-republish is active</div>
-              <div className="font-sans mt-0.5" style={{ fontSize: 12, color: 'rgba(240,239,248,0.50)' }}>Cross-posting new uploads automatically</div>
-            </div>
-            <button
-              onClick={() => navigate('/dashboard/auto-republish')}
-              className="font-sans font-medium flex items-center gap-1"
-              style={{ background: 'none', border: 'none', color: '#8B6AFF', fontSize: 12, cursor: 'pointer' }}
-            >
-              View activity →
-            </button>
-          </div>
-        )}
+        {/* Stats row */}
+        <div className="grid gap-3 stagger" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+          <StatCard icon={Upload}        color="#6C47FF" colorBg="rgba(108,71,255,0.12)" value={stats.uploads}       label="Uploads"       trend="+8 wk"  trendUp={true}  delay={0}   />
+          <StatCard icon={Send}          color="#4F8EF0" colorBg="rgba(79,142,240,0.10)" value={stats.distributions} label="Distributions" trend="+18 wk" trendUp={true}  delay={60}  />
+          <StatCard icon={Repeat}        color="#F5A623" colorBg="rgba(245,166,35,0.10)" value={stats.reposts}       label="Reposts"       trend="+12 wk" trendUp={true}  delay={120} />
+          <StatCard icon={TrendingUp}    color="#0ED2A0" colorBg="rgba(14,210,160,0.10)" value={stats.completed > 0 ? `${Math.round((stats.completed / Math.max(stats.distributions, 1)) * 100)}%` : '—'} label="Success rate" trend="98.4%" trendUp={true} delay={180} />
+        </div>
 
         {/* Two columns */}
-        <div className="grid gap-4" style={{ gridTemplateColumns: '1.4fr 1fr' }}>
-          {/* Recent uploads */}
-          <Card padding={0} className="flex flex-col">
+        <div className="grid gap-4" style={{ gridTemplateColumns: '1.45fr 1fr' }}>
+
+          {/* Activity feed */}
+          <Card padding={0} className="flex flex-col animate-enter" style={{ animationDelay: '120ms' }}>
             <div
               className="flex items-center justify-between px-5 py-4"
               style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
             >
-              <span className="font-sans font-semibold" style={{ fontSize: 13, color: '#F0EFF8' }}>Recent uploads</span>
+              <div className="flex items-center gap-2">
+                <Film size={14} style={{ color: 'rgba(240,239,248,0.40)' }} />
+                <span className="font-sans font-semibold" style={{ fontSize: 13, color: '#F0EFF8' }}>Recent uploads</span>
+              </div>
               <button
                 onClick={() => navigate('/dashboard/library')}
-                className="font-sans flex items-center gap-1"
-                style={{ background: 'none', border: 'none', color: 'rgba(240,239,248,0.50)', fontSize: 12, cursor: 'pointer' }}
+                className="font-sans flex items-center gap-1 rounded-lg"
+                style={{ background: 'none', border: 'none', color: 'rgba(240,239,248,0.40)', fontSize: 12, cursor: 'pointer', padding: '4px 8px', transition: 'color 150ms ease' }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = '#8B6AFF'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'rgba(240,239,248,0.40)'; }}
               >
-                Library →
+                View all <ArrowRight size={11} />
               </button>
             </div>
             {videos.length === 0 ? (
-              <div className="flex items-center justify-center py-10 font-sans" style={{ fontSize: 13, color: 'rgba(240,239,248,0.25)' }}>
-                No uploads yet
+              <div className="flex flex-col items-center justify-center py-14 gap-3">
+                <div
+                  className="flex items-center justify-center rounded-2xl animate-float"
+                  style={{ width: 52, height: 52, background: 'rgba(108,71,255,0.10)', border: '1px solid rgba(108,71,255,0.16)' }}
+                >
+                  <Upload size={22} style={{ color: 'rgba(108,71,255,0.60)' }} />
+                </div>
+                <div className="text-center">
+                  <div className="font-sans font-medium" style={{ fontSize: 13, color: 'rgba(240,239,248,0.50)' }}>No uploads yet</div>
+                  <div className="font-sans mt-1" style={{ fontSize: 12, color: 'rgba(240,239,248,0.25)' }}>Upload your first video to get started</div>
+                </div>
+                <Btn kind="soft" size="sm" icon={Upload} onClick={() => navigate('/dashboard/upload')}>Upload now</Btn>
               </div>
             ) : (
-              videos.map((v: any) => (
-                <div key={v.id} className="flex items-center gap-3.5 px-5 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                  <Thumb w={56} h={32} hue={HUE_MAP[v.status] as any || 'slate'} r={5} />
-                  <div className="flex-1 min-w-0">
-                    <div className="font-sans font-medium truncate" style={{ fontSize: 13, color: '#F0EFF8' }}>{v.title || v.original_filename}</div>
-                    <div className="font-mono mt-0.5" style={{ fontSize: 11, color: 'rgba(240,239,248,0.25)' }}>
-                      {v.duration_seconds ? `${Math.floor(v.duration_seconds / 60)}:${String(Math.round(v.duration_seconds % 60)).padStart(2,'0')}` : '—'} · {new Date(v.created_at).toLocaleDateString()}
+              <div className="stagger">
+                {videos.map((v: any) => (
+                  <div
+                    key={v.id}
+                    className="flex items-center gap-3.5 px-5 py-3 animate-enter"
+                    style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', transition: 'background 150ms ease' }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.02)'; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+                  >
+                    <Thumb w={60} h={36} hue={(HUE_MAP[v.status] || 'slate') as any} r={6} />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-sans font-medium truncate" style={{ fontSize: 13, color: '#F0EFF8' }}>{v.title || v.original_filename}</div>
+                      <div className="font-mono mt-0.5" style={{ fontSize: 11, color: 'rgba(240,239,248,0.25)' }}>
+                        {v.duration_seconds ? `${Math.floor(v.duration_seconds / 60)}:${String(Math.round(v.duration_seconds % 60)).padStart(2, '0')}` : '—'} · {new Date(v.created_at).toLocaleDateString()}
+                      </div>
                     </div>
+                    <StatusBadge status={v.status as any} />
                   </div>
-                  <StatusBadge status={v.status as any} />
-                </div>
-              ))
+                ))}
+              </div>
             )}
           </Card>
 
-          {/* Best time */}
-          <Card padding={0} className="flex flex-col">
+          {/* Best time to post */}
+          <Card padding={0} className="flex flex-col animate-enter" style={{ animationDelay: '180ms' }}>
             <div className="px-5 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-              <div className="font-sans font-semibold" style={{ fontSize: 13, color: '#F0EFF8' }}>Best time to post</div>
-              <div className="font-sans mt-0.5" style={{ fontSize: 12, color: 'rgba(240,239,248,0.50)' }}>Across last 30 days, your audience is most active at:</div>
-            </div>
-            <div className="flex-1 flex flex-col gap-3.5 p-5">
-              <div className="font-display font-extrabold leading-none" style={{ fontSize: 36, letterSpacing: '-0.04em', color: '#F0EFF8' }}>
-                {bestTime ?? '7:00'} <span className="font-semibold" style={{ fontSize: 18, color: 'rgba(240,239,248,0.50)' }}>PM</span>
+              <div className="flex items-center gap-2">
+                <TrendingUp size={14} style={{ color: 'rgba(240,239,248,0.40)' }} />
+                <div className="font-sans font-semibold" style={{ fontSize: 13, color: '#F0EFF8' }}>Best time to post</div>
               </div>
-              <div className="flex items-end gap-1" style={{ height: 90 }}>
-                {[12,18,22,28,34,40,52,68,84,100,92,76,58,44,32].map((h, i) => (
+              <div className="font-sans mt-1" style={{ fontSize: 12, color: 'rgba(240,239,248,0.40)' }}>
+                Peak audience engagement window
+              </div>
+            </div>
+            <div className="flex-1 flex flex-col gap-4 p-5">
+              <div>
+                <div className="font-display font-extrabold leading-none" style={{ fontSize: 38, letterSpacing: '-0.04em', color: '#F0EFF8' }}>
+                  {bestTime ?? '7:00'}{' '}
+                  <span className="font-semibold" style={{ fontSize: 20, color: 'rgba(240,239,248,0.40)' }}>PM</span>
+                </div>
+                <div className="font-sans mt-2" style={{ fontSize: 12, color: 'rgba(240,239,248,0.35)' }}>Based on last 30 days of engagement data</div>
+              </div>
+              <div className="flex items-end gap-1" style={{ height: 80 }}>
+                {[12, 18, 22, 28, 34, 40, 52, 68, 84, 100, 92, 76, 58, 44, 32].map((h, i) => (
                   <div
                     key={i}
-                    className="flex-1 rounded-sm"
+                    className="flex-1 rounded-sm animate-bar-grow"
                     style={{
                       height: `${h}%`,
-                      background: i === 9 ? '#6C47FF' : i === 8 || i === 10 ? '#8B6AFF' : 'rgba(108,71,255,0.18)',
+                      background: i === 9
+                        ? 'linear-gradient(180deg, #8B6AFF, #6C47FF)'
+                        : i === 8 || i === 10
+                        ? 'rgba(108,71,255,0.40)'
+                        : 'rgba(108,71,255,0.14)',
+                      animationDelay: `${i * 25}ms`,
                     }}
                   />
                 ))}
               </div>
               <div className="flex justify-between font-mono" style={{ fontSize: 10, color: 'rgba(240,239,248,0.25)' }}>
                 <span>9 AM</span><span>1 PM</span><span>5 PM</span><span>9 PM</span><span>1 AM</span>
+              </div>
+              <div
+                className="flex items-center gap-2.5 rounded-xl px-4 py-3"
+                style={{ background: 'rgba(108,71,255,0.08)', border: '1px solid rgba(108,71,255,0.14)' }}
+              >
+                <Zap size={13} style={{ color: '#8B6AFF', flexShrink: 0 }} />
+                <span className="font-sans" style={{ fontSize: 12, color: 'rgba(240,239,248,0.55)' }}>
+                  Schedule posts at <strong style={{ color: '#F0EFF8' }}>{bestTime ?? '7:00'} PM</strong> for best reach
+                </span>
               </div>
             </div>
           </Card>
@@ -157,7 +277,7 @@ function Overview() {
   );
 }
 
-// ── Queue page (inline) ────────────────────────────────────────────────────────
+/* ── Queue page ─────────────────────────────────────────────────────────────── */
 function QueuePage() {
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -170,20 +290,32 @@ function QueuePage() {
 
   useEffect(() => { load(); }, []);
 
+  const pending    = jobs.filter(j => j.status === 'pending').length;
+  const processing = jobs.filter(j => j.status === 'processing').length;
+  const done       = jobs.filter(j => j.status === 'done').length;
+  const failed     = jobs.filter(j => j.status === 'failed').length;
+
   return (
     <main className="flex-1 overflow-auto" style={{ background: '#08080E' }}>
-      <div className="flex flex-col gap-6 p-9">
-        <div className="flex items-start justify-between gap-6">
+      <div className="flex flex-col gap-6 p-8">
+
+        {/* Header */}
+        <div className="flex items-start justify-between gap-6 animate-enter">
           <div>
-            <div className="flex items-center gap-2 mb-1">
-              <div className="flex items-center justify-center rounded-lg" style={{ width: 36, height: 36, background: 'rgba(245,166,35,0.10)', color: '#F5A623' }}>
-                <Clock size={18} />
+            <div className="flex items-center gap-3 mb-1">
+              <div
+                className="flex items-center justify-center rounded-xl flex-shrink-0"
+                style={{ width: 38, height: 38, background: 'rgba(245,166,35,0.10)', border: '1px solid rgba(245,166,35,0.18)' }}
+              >
+                <Clock size={18} style={{ color: '#F5A623' }} />
               </div>
               <h1 className="font-display font-extrabold m-0" style={{ fontSize: 28, letterSpacing: '-0.04em', color: '#F0EFF8' }}>Queue</h1>
             </div>
-            <p className="font-sans m-0" style={{ fontSize: 13, color: 'rgba(240,239,248,0.50)' }}>Live job status across every destination.</p>
+            <p className="font-sans m-0 mt-1" style={{ fontSize: 13, color: 'rgba(240,239,248,0.50)' }}>
+              Live job status across every destination.
+            </p>
           </div>
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-3">
             <span className="inline-flex items-center gap-1.5 font-mono" style={{ fontSize: 11, color: 'rgba(240,239,248,0.50)' }}>
               <span className="rounded-full animate-pulse2" style={{ width: 6, height: 6, background: '#0ED2A0', flexShrink: 0 }} />
               live
@@ -193,47 +325,83 @@ function QueuePage() {
         </div>
 
         {/* Stats */}
-        <div className="grid gap-3.5" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
-          <StatCard icon={Clock}         color="#F5A623" colorBg="rgba(245,166,35,0.10)"  value={jobs.filter(j => j.status === 'pending').length}    label="Pending" />
-          <StatCard icon={Zap}           color="#4F8EF0" colorBg="rgba(79,142,240,0.10)"  value={jobs.filter(j => j.status === 'processing').length}  label="Processing" />
-          <StatCard icon={Check}         color="#0ED2A0" colorBg="rgba(14,210,160,0.10)"  value={jobs.filter(j => j.status === 'done').length}        label="Done today" />
-          <StatCard icon={AlertTriangle} color="#F04F4F" colorBg="rgba(240,79,79,0.10)"   value={jobs.filter(j => j.status === 'failed').length}      label="Failed" />
+        <div className="grid gap-3 stagger" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+          <StatCard icon={Clock}         color="#F5A623" colorBg="rgba(245,166,35,0.10)"  value={pending}    label="Pending"    delay={0}   />
+          <StatCard icon={Zap}           color="#4F8EF0" colorBg="rgba(79,142,240,0.10)"  value={processing} label="Processing" delay={60}  />
+          <StatCard icon={Check}         color="#0ED2A0" colorBg="rgba(14,210,160,0.10)"  value={done}       label="Done today" delay={120} />
+          <StatCard icon={AlertTriangle} color="#F04F4F" colorBg="rgba(240,79,79,0.10)"   value={failed}     label="Failed"     delay={180} />
         </div>
 
+        {/* Job list */}
         {loading ? (
-          <div className="font-sans text-center py-12" style={{ color: 'rgba(240,239,248,0.25)', fontSize: 13 }}>Loading…</div>
+          <div className="flex flex-col items-center justify-center py-16 gap-3">
+            <div className="rounded-full animate-spin" style={{ width: 24, height: 24, border: '2px solid rgba(108,71,255,0.20)', borderTopColor: '#6C47FF' }} />
+            <span className="font-sans" style={{ fontSize: 13, color: 'rgba(240,239,248,0.25)' }}>Loading jobs…</span>
+          </div>
         ) : jobs.length === 0 ? (
-          <Card>
-            <div className="text-center py-10 font-sans" style={{ color: 'rgba(240,239,248,0.25)', fontSize: 13 }}>Queue is empty</div>
+          <Card padding={0} animate={true} delay={200}>
+            <div className="flex flex-col items-center justify-center py-16 gap-4">
+              <div
+                className="flex items-center justify-center rounded-2xl animate-float"
+                style={{ width: 56, height: 56, background: 'rgba(245,166,35,0.08)', border: '1px solid rgba(245,166,35,0.16)' }}
+              >
+                <Clock size={24} style={{ color: 'rgba(245,166,35,0.50)' }} />
+              </div>
+              <div className="text-center">
+                <div className="font-sans font-semibold" style={{ fontSize: 14, color: 'rgba(240,239,248,0.60)' }}>Queue is empty</div>
+                <div className="font-sans mt-1" style={{ fontSize: 12, color: 'rgba(240,239,248,0.25)' }}>Jobs will appear here when you distribute videos</div>
+              </div>
+            </div>
           </Card>
         ) : (
-          <div className="flex flex-col gap-2.5">
+          <div className="flex flex-col gap-2.5 stagger">
             {jobs.map((j: any) => {
-              const borderC = j.status === 'processing' ? 'rgba(79,142,240,0.35)' : j.status === 'failed' ? 'rgba(240,79,79,0.30)' : 'rgba(255,255,255,0.07)';
+              const borderC = j.status === 'processing'
+                ? 'rgba(79,142,240,0.30)'
+                : j.status === 'failed'
+                ? 'rgba(240,79,79,0.25)'
+                : j.status === 'done'
+                ? 'rgba(14,210,160,0.15)'
+                : 'rgba(255,255,255,0.07)';
+
+              const activePlatforms: PlatformId[] = (['youtube', 'tiktok', 'instagram'] as PlatformId[]).filter(
+                p => j[`${p}_status`]
+              );
+
               return (
                 <div
                   key={j.id}
-                  className="flex items-center gap-4 rounded-xl px-4 py-3.5"
-                  style={{ background: '#0F0F17', border: `1px solid ${borderC}` }}
+                  className="flex items-center gap-4 rounded-xl animate-enter card-hover"
+                  style={{
+                    background: '#0F0F17',
+                    border: `1px solid ${borderC}`,
+                    padding: '14px 18px',
+                  }}
                 >
-                  <Thumb w={72} h={44} hue={(HUE[j.status] || 'slate') as any} r={6} />
+                  <Thumb w={72} h={44} hue={(HUE[j.status] || 'slate') as any} r={8} />
                   <div className="flex-1 min-w-0">
                     <div className="font-sans font-medium truncate" style={{ fontSize: 13, color: '#F0EFF8' }}>
                       {j.title || j.source_video_url}
                     </div>
-                    <div className="flex items-center gap-2.5 mt-1.5">
-                      <div className="flex gap-1">
-                        {(['youtube','tiktok','instagram'] as const).filter(p => j[`${p}_status`]).map(p => (
-                          <PlatformDot key={p} id={p} size={16} radius={3} />
-                        ))}
-                      </div>
+                    <div className="flex items-center gap-3 mt-2">
+                      {activePlatforms.length > 0 && (
+                        <div className="flex gap-1.5">
+                          {activePlatforms.map(p => (
+                            <PlatformDot key={p} id={p} size={18} radius={5} />
+                          ))}
+                        </div>
+                      )}
                       <span className="font-mono" style={{ fontSize: 11, color: j.status === 'failed' ? '#F04F4F' : 'rgba(240,239,248,0.25)' }}>
                         {new Date(j.created_at).toLocaleString()}
                       </span>
                     </div>
                   </div>
-                  <StatusBadge status={j.status as any} />
-                  {j.status === 'failed' && <Btn kind="soft" size="sm" icon={RefreshCw}>Retry</Btn>}
+                  <div className="flex items-center gap-2.5 flex-shrink-0">
+                    <StatusBadge status={j.status as any} />
+                    {j.status === 'failed' && (
+                      <Btn kind="soft" size="sm" icon={RefreshCw}>Retry</Btn>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -244,7 +412,7 @@ function QueuePage() {
   );
 }
 
-// ── Accounts page (inline) ─────────────────────────────────────────────────────
+/* ── Accounts page ──────────────────────────────────────────────────────────── */
 function AccountsPage() {
   const [accounts, setAccounts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -267,51 +435,114 @@ function AccountsPage() {
     } catch {}
   };
 
+  const PLATFORM_LABELS: Record<string, string> = {
+    youtube: 'YouTube',
+    tiktok: 'TikTok',
+    instagram: 'Instagram',
+  };
+
+  const PLATFORM_DESCS: Record<string, string> = {
+    youtube: 'Upload videos to your YouTube channel automatically',
+    tiktok: 'Distribute short clips to TikTok',
+    instagram: 'Post Reels and videos to Instagram',
+  };
+
   return (
     <main className="flex-1 overflow-auto" style={{ background: '#08080E' }}>
-      <div className="flex flex-col gap-6 p-9">
-        <div className="flex items-start justify-between gap-6">
+      <div className="flex flex-col gap-6 p-8">
+
+        {/* Header */}
+        <div className="flex items-start justify-between gap-6 animate-enter">
           <div>
-            <h1 className="font-display font-extrabold m-0" style={{ fontSize: 28, letterSpacing: '-0.04em', color: '#F0EFF8' }}>Connected accounts</h1>
-            <p className="font-sans m-0 mt-2" style={{ fontSize: 13, color: 'rgba(240,239,248,0.50)' }}>Manage which platforms Redistribute can post to on your behalf.</p>
+            <h1 className="font-display font-extrabold m-0" style={{ fontSize: 28, letterSpacing: '-0.04em', color: '#F0EFF8' }}>
+              Connected accounts
+            </h1>
+            <p className="font-sans m-0 mt-2" style={{ fontSize: 13, color: 'rgba(240,239,248,0.50)' }}>
+              Manage which platforms Redistribute can post to on your behalf.
+            </p>
           </div>
         </div>
 
         {loading ? (
-          <div className="font-sans py-10 text-center" style={{ color: 'rgba(240,239,248,0.25)', fontSize: 13 }}>Loading…</div>
+          <div className="flex flex-col items-center justify-center py-16 gap-3">
+            <div className="rounded-full animate-spin" style={{ width: 24, height: 24, border: '2px solid rgba(108,71,255,0.20)', borderTopColor: '#6C47FF' }} />
+            <span className="font-sans" style={{ fontSize: 13, color: 'rgba(240,239,248,0.25)' }}>Loading accounts…</span>
+          </div>
         ) : (
-          <div className="flex flex-col gap-3">
-            {(['youtube','tiktok','instagram'] as const).map(pid => {
-              const acc = accounts.find(a => a.platform === pid);
+          <div className="flex flex-col gap-3.5 stagger">
+            {(['youtube', 'tiktok', 'instagram'] as PlatformId[]).map((pid, i) => {
+              const acc = accounts.find((a: any) => a.platform === pid);
               const expired = acc?.status === 'paused' || acc?.token_expired;
+              const connected = !!acc && !expired;
+
               return (
-                <Card key={pid} padding={20} style={{ borderColor: expired ? 'rgba(245,166,35,0.30)' : 'rgba(255,255,255,0.07)' }}>
-                  <div className="flex items-center gap-4">
-                    <PlatformDot id={pid} size={48} radius={12} />
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3">
-                        <span className="font-display font-bold" style={{ fontSize: 18, letterSpacing: '-0.02em', color: '#F0EFF8' }}>
-                          {pid.charAt(0).toUpperCase() + pid.slice(1)}
+                <div
+                  key={pid}
+                  className="relative rounded-2xl overflow-hidden animate-enter"
+                  style={{
+                    background: '#0F0F17',
+                    border: `1px solid ${connected ? 'rgba(14,210,160,0.16)' : expired ? 'rgba(245,166,35,0.22)' : 'rgba(255,255,255,0.07)'}`,
+                    animationDelay: `${i * 80}ms`,
+                    transition: 'border-color 200ms ease',
+                  }}
+                >
+                  {/* Ambient bg glow for connected */}
+                  {connected && (
+                    <div className="absolute inset-0 pointer-events-none" style={{
+                      background: 'radial-gradient(ellipse at 100% 0%, rgba(14,210,160,0.04), transparent 50%)',
+                    }} />
+                  )}
+                  <div className="relative flex items-center gap-5 p-6">
+                    {/* Platform logo */}
+                    <div className="relative flex-shrink-0">
+                      <PlatformDot id={pid} size={52} radius={14} />
+                      {connected && (
+                        <div
+                          className="absolute -bottom-1 -right-1 rounded-full flex items-center justify-center"
+                          style={{ width: 16, height: 16, background: '#0ED2A0', border: '2px solid #0F0F17' }}
+                        >
+                          <Check size={8} color="#000" strokeWidth={3} />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <span className="font-display font-bold" style={{ fontSize: 19, letterSpacing: '-0.02em', color: '#F0EFF8' }}>
+                          {PLATFORM_LABELS[pid]}
                         </span>
                         {acc && <StatusBadge status={expired ? 'paused' : 'active'} />}
-                        {acc?.handle && <span className="font-mono" style={{ fontSize: 12, color: 'rgba(240,239,248,0.50)' }}>@{acc.handle}</span>}
+                        {acc?.handle && (
+                          <span className="font-mono" style={{ fontSize: 12, color: 'rgba(240,239,248,0.40)' }}>
+                            @{acc.handle}
+                          </span>
+                        )}
                       </div>
-                      <div className="font-sans mt-1.5" style={{ fontSize: 12, color: 'rgba(240,239,248,0.50)' }}>
-                        {acc ? (expired ? 'Token expired · reconnect to resume' : 'Connected · auto-publish on') : 'Not connected'}
+                      <div className="font-sans mt-1.5" style={{ fontSize: 13, color: 'rgba(240,239,248,0.45)', lineHeight: 1.5 }}>
+                        {acc
+                          ? (expired
+                            ? 'Token expired — reconnect to resume auto-publishing'
+                            : `Connected · auto-publish enabled · ${PLATFORM_DESCS[pid]}`)
+                          : PLATFORM_DESCS[pid]}
                       </div>
                     </div>
-                    {!acc ? (
-                      <Btn kind="primary" size="sm" onClick={() => connect(pid)}>Connect</Btn>
-                    ) : expired ? (
-                      <Btn kind="primary" size="sm" icon={RefreshCw} onClick={() => connect(pid)}>Reconnect</Btn>
-                    ) : (
-                      <div className="flex gap-2">
-                        <Btn kind="ghost" size="sm">Settings</Btn>
-                        <Btn kind="soft" size="sm" onClick={() => disconnect(acc.id)}>Disconnect</Btn>
-                      </div>
-                    )}
+
+                    {/* Action buttons */}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {!acc ? (
+                        <Btn kind="primary" size="sm" onClick={() => connect(pid)}>Connect</Btn>
+                      ) : expired ? (
+                        <Btn kind="primary" size="sm" icon={RefreshCw} onClick={() => connect(pid)}>Reconnect</Btn>
+                      ) : (
+                        <>
+                          <Btn kind="ghost" size="sm">Settings</Btn>
+                          <Btn kind="soft" size="sm" onClick={() => disconnect(acc.id)}>Disconnect</Btn>
+                        </>
+                      )}
+                    </div>
                   </div>
-                </Card>
+                </div>
               );
             })}
           </div>
@@ -321,12 +552,11 @@ function AccountsPage() {
   );
 }
 
-// ── Billing page (inline) ──────────────────────────────────────────────────────
+/* ── Billing page ───────────────────────────────────────────────────────────── */
 function BillingPage() {
   const [plan, setPlan] = useState<any>(null);
 
   useEffect(() => {
-    // Plan type inferred from user profile; if no stripe endpoint exists just leave null
     api.auth.me().then((u: any) => setPlan(u)).catch(() => {});
   }, []);
 
@@ -344,10 +574,14 @@ function BillingPage() {
     } catch {}
   };
 
+  const isPro = plan?.plan_type === 'pro';
+
   return (
     <main className="flex-1 overflow-auto" style={{ background: '#08080E' }}>
-      <div className="flex flex-col gap-6 p-9">
-        <div className="flex items-start justify-between gap-6">
+      <div className="flex flex-col gap-6 p-8">
+
+        {/* Header */}
+        <div className="flex items-start justify-between gap-6 animate-enter">
           <div>
             <h1 className="font-display font-extrabold m-0" style={{ fontSize: 28, letterSpacing: '-0.04em', color: '#F0EFF8' }}>Billing</h1>
             <p className="font-sans m-0 mt-2" style={{ fontSize: 13, color: 'rgba(240,239,248,0.50)' }}>Plan, usage, and invoices.</p>
@@ -356,69 +590,125 @@ function BillingPage() {
         </div>
 
         {/* Plan banner */}
-        <Card padding={0} style={{ overflow: 'hidden', position: 'relative' }}>
+        <div
+          className="relative rounded-2xl overflow-hidden animate-enter"
+          style={{ background: '#0F0F17', border: `1px solid ${isPro ? 'rgba(108,71,255,0.25)' : 'rgba(255,255,255,0.07)'}`, animationDelay: '60ms' }}
+        >
+          {/* Gradient overlay */}
           <div
             className="absolute inset-0 pointer-events-none"
-            style={{ background: 'radial-gradient(circle at 100% 0%, rgba(108,71,255,0.18), transparent 50%), radial-gradient(circle at 0% 100%, rgba(14,210,160,0.10), transparent 50%)' }}
+            style={{
+              background: isPro
+                ? 'radial-gradient(circle at 100% 0%, rgba(108,71,255,0.18), transparent 50%), radial-gradient(circle at 0% 100%, rgba(14,210,160,0.10), transparent 50%)'
+                : 'radial-gradient(circle at 100% 0%, rgba(108,71,255,0.08), transparent 50%)',
+            }}
           />
-          <div className="relative flex items-center gap-6 px-7 py-6">
-            <div>
-              <div className="font-sans font-bold uppercase" style={{ fontSize: 11, color: 'rgba(240,239,248,0.25)', letterSpacing: '0.08em' }}>Current plan</div>
-              <div className="flex items-center gap-3.5 mt-2">
-                <span className="font-display font-extrabold" style={{ fontSize: 36, letterSpacing: '-0.04em', color: '#F0EFF8' }}>
-                  {plan?.plan_type === 'pro' ? 'Pro' : 'Free'}
+
+          <div className="relative flex items-center gap-6 px-7 py-7">
+            <div className="flex-1">
+              <div className="font-sans font-bold uppercase" style={{ fontSize: 11, color: 'rgba(240,239,248,0.30)', letterSpacing: '0.08em' }}>
+                Current plan
+              </div>
+              <div className="flex items-center gap-3.5 mt-2.5">
+                <span className="font-display font-extrabold" style={{ fontSize: 38, letterSpacing: '-0.04em', color: '#F0EFF8' }}>
+                  {isPro ? 'Pro' : 'Free'}
                 </span>
-                <StatusBadge status={plan?.plan_type === 'pro' ? 'active' : 'trial'} />
-                {plan?.plan_type === 'pro' && (
-                  <span className="font-mono" style={{ fontSize: 12, color: 'rgba(240,239,248,0.50)' }}>$12 / month</span>
+                <StatusBadge status={isPro ? 'active' : 'trial'} />
+                {isPro && (
+                  <span className="font-mono" style={{ fontSize: 13, color: 'rgba(240,239,248,0.40)' }}>$12 / month</span>
                 )}
               </div>
+              {isPro && (
+                <div className="font-sans mt-1.5" style={{ fontSize: 13, color: 'rgba(240,239,248,0.45)' }}>
+                  Unlimited uploads · AI clips · Auto-Republish · Priority queue
+                </div>
+              )}
             </div>
-            <div className="flex-1" />
-            {plan?.plan_type !== 'pro' ? (
-              <Btn kind="primary" onClick={handleUpgrade}>Upgrade to Pro — $12/mo</Btn>
-            ) : (
-              <div className="flex gap-2">
-                <Btn kind="ghost">Change plan</Btn>
-                <Btn kind="soft">Cancel</Btn>
-              </div>
-            )}
+            <div className="flex gap-2.5 flex-shrink-0">
+              {!isPro ? (
+                <Btn kind="primary" onClick={handleUpgrade}>Upgrade to Pro — $12/mo</Btn>
+              ) : (
+                <>
+                  <Btn kind="ghost">Change plan</Btn>
+                  <Btn kind="soft">Cancel</Btn>
+                </>
+              )}
+            </div>
           </div>
 
-          {plan?.plan_type === 'pro' && (
-            <div className="relative grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', borderTop: '1px solid rgba(255,255,255,0.04)' }}>
+          {isPro && (
+            <div
+              className="relative grid"
+              style={{ gridTemplateColumns: 'repeat(3, 1fr)', borderTop: '1px solid rgba(255,255,255,0.06)' }}
+            >
               {[
-                { label: 'Uploads this cycle', used: plan?.uploads_used ?? 0, total: '∞', color: '#6C47FF', frac: 0.3 },
-                { label: 'Auto-republish events', used: plan?.reposts_used ?? 0, total: '∞', color: '#0ED2A0', frac: 0.2 },
-                { label: 'Storage', used: `${((plan?.storage_used_bytes ?? 0) / 1e9).toFixed(1)} GB`, total: '50 GB', color: '#4F8EF0', frac: (plan?.storage_used_bytes ?? 0) / 50e9 },
+                { label: 'Uploads this cycle',      used: plan?.uploads_used ?? 0,   total: '∞',     color: '#6C47FF', frac: 0.3 },
+                { label: 'Auto-republish events',   used: plan?.reposts_used ?? 0,   total: '∞',     color: '#0ED2A0', frac: 0.2 },
+                { label: 'Storage',                 used: `${((plan?.storage_used_bytes ?? 0) / 1e9).toFixed(1)} GB`, total: '50 GB', color: '#4F8EF0', frac: (plan?.storage_used_bytes ?? 0) / 50e9 },
               ].map((u, i) => (
-                <div key={i} className="px-6 py-5" style={{ borderRight: i < 2 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
-                  <div className="font-sans font-semibold uppercase" style={{ fontSize: 11, letterSpacing: '0.08em', color: 'rgba(240,239,248,0.25)' }}>{u.label}</div>
+                <div
+                  key={i}
+                  className="px-6 py-5"
+                  style={{ borderRight: i < 2 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}
+                >
+                  <div className="font-sans font-semibold uppercase" style={{ fontSize: 11, letterSpacing: '0.08em', color: 'rgba(240,239,248,0.30)' }}>
+                    {u.label}
+                  </div>
                   <div className="flex items-baseline gap-1.5 mt-2">
-                    <span className="font-display font-extrabold" style={{ fontSize: 22, letterSpacing: '-0.03em', color: '#F0EFF8' }}>{u.used}</span>
+                    <span className="font-display font-extrabold" style={{ fontSize: 24, letterSpacing: '-0.03em', color: '#F0EFF8' }}>{u.used}</span>
                     <span className="font-mono" style={{ fontSize: 12, color: 'rgba(240,239,248,0.25)' }}>/ {u.total}</span>
                   </div>
                   <div className="mt-3 rounded-full overflow-hidden" style={{ height: 4, background: 'rgba(255,255,255,0.06)' }}>
-                    <div style={{ width: `${Math.min(u.frac * 100, 100)}%`, height: '100%', background: u.color, borderRadius: 999 }} />
+                    <div
+                      className="animate-bar-grow"
+                      style={{ width: `${Math.min((u.frac ?? 0) * 100, 100)}%`, height: '100%', background: u.color, borderRadius: 999 }}
+                    />
                   </div>
                 </div>
               ))}
             </div>
           )}
-        </Card>
+        </div>
 
-        {plan?.plan_type !== 'pro' && (
+        {/* Upgrade CTA for free users */}
+        {!isPro && (
           <div
-            className="rounded-2xl p-7 relative overflow-hidden"
-            style={{ background: 'rgba(108,71,255,0.06)', border: '1px solid rgba(108,71,255,0.20)' }}
+            className="rounded-2xl p-7 relative overflow-hidden animate-enter"
+            style={{
+              background: 'rgba(108,71,255,0.06)',
+              border: '1px solid rgba(108,71,255,0.20)',
+              animationDelay: '120ms',
+            }}
           >
-            <h3 className="font-display font-bold m-0 mb-3" style={{ fontSize: 22, letterSpacing: '-0.02em', color: '#F0EFF8' }}>
-              Upgrade to Pro
-            </h3>
-            <p className="font-sans m-0 mb-5" style={{ fontSize: 14, color: 'rgba(240,239,248,0.50)', lineHeight: 1.65 }}>
-              Unlimited uploads, Auto-Republish, AI smart clips, priority queue — everything you need to run your cross-platform workflow on autopilot.
-            </p>
-            <Btn kind="primary" onClick={handleUpgrade}>Get Pro — $12/mo</Btn>
+            <div
+              className="absolute inset-0 pointer-events-none"
+              style={{ background: 'radial-gradient(ellipse at 0% 0%, rgba(108,71,255,0.12), transparent 60%)' }}
+            />
+            <div className="relative">
+              <div className="font-sans font-semibold uppercase mb-2" style={{ fontSize: 11, letterSpacing: '0.08em', color: '#8B6AFF' }}>
+                Upgrade
+              </div>
+              <h3 className="font-display font-bold m-0 mb-3" style={{ fontSize: 24, letterSpacing: '-0.03em', color: '#F0EFF8' }}>
+                Go unlimited with Pro
+              </h3>
+              <p className="font-sans m-0 mb-5" style={{ fontSize: 14, color: 'rgba(240,239,248,0.55)', lineHeight: 1.65 }}>
+                Unlimited uploads, Auto-Republish, AI smart clips, priority queue — everything you need to run your cross-platform workflow on autopilot.
+              </p>
+              <div className="flex items-center gap-4 flex-wrap">
+                <Btn kind="primary" onClick={handleUpgrade}>Get Pro — $12/mo</Btn>
+                {[
+                  'Unlimited uploads',
+                  'AI clip generation',
+                  'Auto-Republish',
+                  'Priority processing',
+                ].map(f => (
+                  <span key={f} className="inline-flex items-center gap-1.5 font-sans" style={{ fontSize: 12, color: 'rgba(240,239,248,0.50)' }}>
+                    <Check size={12} style={{ color: '#0ED2A0' }} />
+                    {f}
+                  </span>
+                ))}
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -426,7 +716,7 @@ function BillingPage() {
   );
 }
 
-// ── Dashboard shell ────────────────────────────────────────────────────────────
+/* ── Dashboard shell ────────────────────────────────────────────────────────── */
 export default function Dashboard() {
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: '#08080E' }}>
