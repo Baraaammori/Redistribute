@@ -184,10 +184,89 @@ async function refreshTokenIfExpired(account, gracePeriodMs = 5 * 60 * 1000) {
   }
 }
 
+/**
+ * Call a platform API function with automatic retry logic.
+ *
+ * Retry rules:
+ *  - 429: wait for Retry-After header value (seconds) then retry
+ *  - 401: refresh token via refreshFn then retry ONCE
+ *  - 500/503: exponential backoff (2s → 4s → 8s)
+ *  - 400/403: throw immediately — permanent client error, do not retry
+ *
+ * @param {function} fn - async function that performs the API call; receives no args
+ * @param {object}  [opts]
+ * @param {number}  [opts.maxAttempts=3]
+ * @param {object}  [opts.account]     - platform_accounts row (used for 401 token refresh)
+ * @param {function}[opts.onRefresh]   - called after a successful token refresh with the updated account
+ * @returns {*} whatever fn() resolves to
+ */
+async function apiCallWithRetry(fn, opts = {}) {
+  const { maxAttempts = 3, account, onRefresh } = opts;
+  let attempt = 0;
+  let tokenRefreshed = false;
+
+  while (attempt < maxAttempts) {
+    attempt++;
+    try {
+      return await fn();
+    } catch (err) {
+      const status   = err.response?.status;
+      const headers  = err.response?.headers || {};
+      const isPermanent = status === 400 || status === 403;
+
+      // Permanent failures — do NOT retry
+      if (isPermanent) {
+        console.error(`[apiCallWithRetry] Permanent error ${status} on attempt ${attempt}:`, err.message);
+        throw err;
+      }
+
+      if (attempt >= maxAttempts) {
+        console.error(`[apiCallWithRetry] Exhausted ${maxAttempts} attempts. Last error:`, err.message);
+        throw err;
+      }
+
+      // 429 — respect Retry-After
+      if (status === 429) {
+        const retryAfter = parseInt(headers["retry-after"] || "5", 10);
+        console.warn(`[apiCallWithRetry] 429 rate limit — waiting ${retryAfter}s before retry ${attempt + 1}/${maxAttempts}`);
+        await new Promise(r => setTimeout(r, retryAfter * 1000));
+        continue;
+      }
+
+      // 401 — token expired; refresh once then retry
+      if (status === 401 && account && !tokenRefreshed) {
+        console.warn(`[apiCallWithRetry] 401 — refreshing token for account ${account.id}`);
+        try {
+          const refreshed = await refreshTokenIfExpired({ ...account, expires_at: new Date(0) }); // force refresh
+          if (onRefresh) onRefresh(refreshed);
+          Object.assign(account, refreshed);
+          tokenRefreshed = true;
+          continue; // retry once with fresh token
+        } catch (refreshErr) {
+          console.error(`[apiCallWithRetry] Token refresh failed:`, refreshErr.message);
+          throw refreshErr;
+        }
+      }
+
+      // 500/503 — server error, exponential backoff
+      if (status === 500 || status === 503 || !status) {
+        const backoff = Math.pow(2, attempt) * 1000; // 2s, 4s, 8s
+        console.warn(`[apiCallWithRetry] ${status || 'network'} error — backoff ${backoff}ms before retry ${attempt + 1}/${maxAttempts}`);
+        await new Promise(r => setTimeout(r, backoff));
+        continue;
+      }
+
+      // Unknown error — throw
+      throw err;
+    }
+  }
+}
+
 module.exports = {
   isTokenExpired,
   refreshTokenIfExpired,
   refreshYouTubeToken,
   refreshTikTokToken,
   refreshInstagramToken,
+  apiCallWithRetry,
 };

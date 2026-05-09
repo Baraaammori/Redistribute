@@ -4,6 +4,16 @@ const cors    = require("cors");
 
 const app = express();
 
+// ── CREDENTIAL STARTUP VALIDATION ─────────────────────────────────────────────
+// These logs appear on every boot so missing/wrong env vars are caught immediately
+// instead of silently failing on day 2 during a token refresh call.
+console.log("[tiktok]    credentials loaded: client_key=" + (process.env.TIKTOK_CLIENT_KEY?.slice(0, 6) || "MISSING") + "...");
+console.log("[tiktok]    client_secret present:", !!process.env.TIKTOK_CLIENT_SECRET);
+console.log("[youtube]   client_id present:", !!process.env.YOUTUBE_CLIENT_ID, "| secret present:", !!process.env.YOUTUBE_CLIENT_SECRET);
+console.log("[instagram] app_id present:", !!process.env.INSTAGRAM_APP_ID, "| secret present:", !!process.env.INSTAGRAM_APP_SECRET);
+if (!process.env.TIKTOK_CLIENT_KEY)    console.error("⚠️  [WARN] TIKTOK_CLIENT_KEY is missing — TikTok token refresh WILL fail!");
+if (!process.env.TIKTOK_CLIENT_SECRET) console.error("⚠️  [WARN] TIKTOK_CLIENT_SECRET is missing — TikTok token refresh WILL fail!");
+
 // ── TIKTOK VERIFICATION (must be first, before any other middleware) ──────────
 const tiktokStr = "tiktok-developers-site-verification=bghKrrlfRtF6BKysbfBCv0nrPTK70xQW";
 app.use((req, res, next) => {
@@ -30,7 +40,7 @@ app.use("/api/accounts",      require("./routes/accounts"));
 app.use("/api/videos",        require("./routes/videos"));
 app.use("/api/reposts",       require("./routes/reposts"));
 app.use("/api/stripe",        require("./routes/stripe"));
-app.use("/api/upload",        require("./routes/upload"));
+// upload route removed — simple-saas branch is automation-only
 app.use("/api/best-time",     require("./routes/besttime"));
 app.use("/api/auto-republish",require("./routes/autoRepublish"));
 

@@ -8,7 +8,7 @@ const { authenticateToken } = require("../middleware/auth");
 router.get("/", authenticateToken, async (req, res) => {
   const { data, error } = await supabase
     .from("platform_accounts")
-    .select("id, platform, handle, display_name, follower_count, connected_at")
+    .select("id, platform, handle, display_name, follower_count, connected_at, status, expires_at, connected, error_message")
     .eq("user_id", req.user.userId);
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
@@ -168,23 +168,49 @@ router.get("/instagram/auth-url", authenticateToken, (req, res) => {
 
 // GET /api/accounts/instagram/callback
 router.get("/instagram/callback", async (req, res) => {
-  const { code, state: userId } = req.query;
+  // FIX 1 & 4: Log callback entry immediately; guard against user-denied and double-fire
+  console.log("[instagram-oauth] callback received, code present:", !!req.query.code);
+
+  // FIX 4: Check for user-denied BEFORE reading code
+  if (req.query.error) {
+    console.warn("[instagram-oauth] user denied or error:", req.query.error, req.query.error_reason);
+    return res.redirect(`${process.env.FRONTEND_URL}/dashboard/accounts?error=${req.query.error_reason || req.query.error}`);
+  }
+
+  // FIX 1: Guard against callback firing twice (second call has no code)
+  const code = req.query.code;
+  if (!code) {
+    console.warn("[instagram-oauth] no code in callback — possible double-fire or direct navigation");
+    return res.redirect(`${process.env.FRONTEND_URL}/dashboard/accounts?error=no_code`);
+  }
+
+  const { state: userId } = req.query;
+
+  // FIX 3: Token exchange is the VERY FIRST async operation — before any DB or other API calls
+  // Instagram codes expire in 60 seconds; don't let any slow middleware eat that window.
+  console.log("[instagram-oauth] exchanging code, redirect_uri:", process.env.INSTAGRAM_REDIRECT_URI);
+  let tokenData;
   try {
-    // 1. Exchange code for access token using Facebook Graph
-    const { data: tokenData } = await axios.get(
+    const tokenResp = await axios.get(
       "https://graph.facebook.com/v19.0/oauth/access_token",
       {
         params: {
-          client_id: process.env.INSTAGRAM_APP_ID,
+          client_id:     process.env.INSTAGRAM_APP_ID,
           client_secret: process.env.INSTAGRAM_APP_SECRET,
-          redirect_uri: process.env.INSTAGRAM_REDIRECT_URI,
+          redirect_uri:  process.env.INSTAGRAM_REDIRECT_URI,
           code,
         }
       }
     );
+    tokenData = tokenResp.data;
+  } catch (tokenErr) {
+    console.error("❌ Instagram token exchange failed:", tokenErr.response?.data || tokenErr.message);
+    return res.redirect(`${process.env.FRONTEND_URL}/dashboard/accounts?error=instagram_token_failed`);
+  }
 
-    console.log("✅ Got Facebook access token");
+  console.log("✅ Got Facebook access token");
 
+  try {
     // 2. Fetch Facebook Pages (use fields to get page access_token)
     const { data: pages } = await axios.get("https://graph.facebook.com/v19.0/me/accounts", {
       params: {

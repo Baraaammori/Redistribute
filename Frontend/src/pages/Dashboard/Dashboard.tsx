@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Routes, Route, useNavigate } from 'react-router-dom';
 import {
-  Upload, Send, Repeat, Check, AlertTriangle,
-  Clock, Zap, RefreshCw, TrendingUp, Film, ArrowRight,
+  Send, Repeat, Check, AlertTriangle,
+  Clock, Zap, RefreshCw, TrendingUp, PlusCircle, ArrowRight,
   Wifi, WifiOff,
 } from 'lucide-react';
 import { api } from '../../lib/api';
@@ -13,8 +13,6 @@ import { StatusBadge } from '../../components/ui/StatusBadge';
 import { Btn } from '../../components/ui/Btn';
 import { Thumb } from '../../components/ui/Thumb';
 import { PlatformDot, PlatformId } from '../../components/ui/PlatformDot';
-import UploadCenter  from './UploadCenter';
-import VideoLibrary  from './VideoLibrary';
 import NewRepost     from './NewRepost';
 import AutoRepublish from './AutoRepublish';
 import SettingsPage  from './Settings';
@@ -34,19 +32,24 @@ function formatDate(): string {
 /* ── Overview page ─────────────────────────────────────────────────────────── */
 function Overview() {
   const navigate = useNavigate();
-  const [stats, setStats]     = useState({ uploads: 0, clips: 0, distributions: 0, reposts: 0, completed: 0, failed: 0 });
-  const [videos, setVideos]   = useState<any[]>([]);
+  const [stats, setStats]     = useState({ reposts: 0, completed: 0, failed: 0, pending: 0 });
+  const [recentReposts, setRecentReposts] = useState<any[]>([]);
   const [bestTime, setBestTime] = useState<string | null>(null);
   const [autoActive, setAutoActive] = useState(false);
   const [accounts, setAccounts] = useState<any[]>([]);
 
   useEffect(() => {
-    api.upload.list().then((vs: any[]) => {
-      setVideos(vs.slice(0, 5));
-      setStats(s => ({ ...s, uploads: vs.length, distributions: vs.length * 2 }));
+    api.reposts.list().then((rs: any[]) => {
+      setRecentReposts(rs.slice(0, 5));
+      setStats({
+        reposts:   rs.length,
+        completed: rs.filter((r: any) => r.status === 'done').length,
+        failed:    rs.filter((r: any) => r.status === 'failed').length,
+        pending:   rs.filter((r: any) => r.status === 'pending' || r.status === 'processing').length,
+      });
     }).catch(() => {});
     api.bestTime.get().then((d: any) => d?.best_hour != null && setBestTime(`${d.best_hour}:00`)).catch(() => {});
-    api.accounts.autoRepublishStatus().then((arr: any[]) => setAutoActive(arr.some((a: any) => a.enabled))).catch(() => {});
+    api.accounts.autoRepublishStatus().then((arr: any[]) => setAutoActive(arr.some((a: any) => a.auto_republish_enabled))).catch(() => {});
     api.accounts.list().then((d: any[]) => setAccounts(d ?? [])).catch(() => {});
   }, []);
 
@@ -91,8 +94,8 @@ function Overview() {
                 )}
               </div>
             </div>
-            <Btn kind="primary" icon={Upload} onClick={() => navigate('/dashboard/upload')}>
-              Upload video
+            <Btn kind="primary" icon={PlusCircle} onClick={() => navigate('/dashboard/repost')}>
+              New Repost
             </Btn>
           </div>
         </div>
@@ -154,69 +157,74 @@ function Overview() {
 
         {/* Stats row */}
         <div className="grid gap-3 stagger" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
-          <StatCard icon={Upload}        color="#6C47FF" colorBg="rgba(108,71,255,0.12)" value={stats.uploads}       label="Uploads"       trend="+8 wk"  trendUp={true}  delay={0}   />
-          <StatCard icon={Send}          color="#4F8EF0" colorBg="rgba(79,142,240,0.10)" value={stats.distributions} label="Distributions" trend="+18 wk" trendUp={true}  delay={60}  />
-          <StatCard icon={Repeat}        color="#F5A623" colorBg="rgba(245,166,35,0.10)" value={stats.reposts}       label="Reposts"       trend="+12 wk" trendUp={true}  delay={120} />
-          <StatCard icon={TrendingUp}    color="#0ED2A0" colorBg="rgba(14,210,160,0.10)" value={stats.completed > 0 ? `${Math.round((stats.completed / Math.max(stats.distributions, 1)) * 100)}%` : '—'} label="Success rate" trend="98.4%" trendUp={true} delay={180} />
+          <StatCard icon={Repeat}        color="#6C47FF" colorBg="rgba(108,71,255,0.12)" value={stats.reposts}   label="Total reposts" delay={0}   />
+          <StatCard icon={Clock}         color="#F5A623" colorBg="rgba(245,166,35,0.10)" value={stats.pending}   label="In queue"      delay={60}  />
+          <StatCard icon={Check}         color="#0ED2A0" colorBg="rgba(14,210,160,0.10)" value={stats.completed} label="Completed"     delay={120} />
+          <StatCard icon={TrendingUp}    color="#4F8EF0" colorBg="rgba(79,142,240,0.10)" value={stats.reposts > 0 ? `${Math.round((stats.completed / Math.max(stats.reposts, 1)) * 100)}%` : '—'} label="Success rate" delay={180} />
         </div>
 
         {/* Two columns */}
         <div className="grid gap-4" style={{ gridTemplateColumns: '1.45fr 1fr' }}>
 
-          {/* Activity feed */}
+          {/* Recent reposts feed */}
           <Card padding={0} className="flex flex-col animate-enter" style={{ animationDelay: '120ms' }}>
             <div
               className="flex items-center justify-between px-5 py-4"
               style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
             >
               <div className="flex items-center gap-2">
-                <Film size={14} style={{ color: 'rgba(240,239,248,0.40)' }} />
-                <span className="font-sans font-semibold" style={{ fontSize: 13, color: '#F0EFF8' }}>Recent uploads</span>
+                <Repeat size={14} style={{ color: 'rgba(240,239,248,0.40)' }} />
+                <span className="font-sans font-semibold" style={{ fontSize: 13, color: '#F0EFF8' }}>Recent reposts</span>
               </div>
               <button
-                onClick={() => navigate('/dashboard/library')}
+                onClick={() => navigate('/dashboard/queue')}
                 className="font-sans flex items-center gap-1 rounded-lg"
                 style={{ background: 'none', border: 'none', color: 'rgba(240,239,248,0.40)', fontSize: 12, cursor: 'pointer', padding: '4px 8px', transition: 'color 150ms ease' }}
                 onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = '#8B6AFF'; }}
                 onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'rgba(240,239,248,0.40)'; }}
               >
-                View all <ArrowRight size={11} />
+                View queue <ArrowRight size={11} />
               </button>
             </div>
-            {videos.length === 0 ? (
+            {recentReposts.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-14 gap-3">
                 <div
                   className="flex items-center justify-center rounded-2xl animate-float"
                   style={{ width: 52, height: 52, background: 'rgba(108,71,255,0.10)', border: '1px solid rgba(108,71,255,0.16)' }}
                 >
-                  <Upload size={22} style={{ color: 'rgba(108,71,255,0.60)' }} />
+                  <Repeat size={22} style={{ color: 'rgba(108,71,255,0.60)' }} />
                 </div>
                 <div className="text-center">
-                  <div className="font-sans font-medium" style={{ fontSize: 13, color: 'rgba(240,239,248,0.50)' }}>No uploads yet</div>
-                  <div className="font-sans mt-1" style={{ fontSize: 12, color: 'rgba(240,239,248,0.25)' }}>Upload your first video to get started</div>
+                  <div className="font-sans font-medium" style={{ fontSize: 13, color: 'rgba(240,239,248,0.50)' }}>No reposts yet</div>
+                  <div className="font-sans mt-1" style={{ fontSize: 12, color: 'rgba(240,239,248,0.25)' }}>Create your first repost to get started</div>
                 </div>
-                <Btn kind="soft" size="sm" icon={Upload} onClick={() => navigate('/dashboard/upload')}>Upload now</Btn>
+                <Btn kind="soft" size="sm" icon={PlusCircle} onClick={() => navigate('/dashboard/repost')}>New repost</Btn>
               </div>
             ) : (
               <div className="stagger">
-                {videos.map((v: any) => (
-                  <div
-                    key={v.id}
-                    className="flex items-center gap-3.5 px-5 py-3 animate-enter"
-                    style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', transition: 'background 150ms ease' }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.02)'; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
-                  >
-                    <Thumb w={60} h={36} hue={(HUE_MAP[v.status] || 'slate') as any} r={6} />
-                    <div className="flex-1 min-w-0">
-                      <div className="font-sans font-medium truncate" style={{ fontSize: 13, color: '#F0EFF8' }}>{v.title || v.original_filename}</div>
-                      <div className="font-mono mt-0.5" style={{ fontSize: 11, color: 'rgba(240,239,248,0.25)' }}>
-                        {v.duration_seconds ? `${Math.floor(v.duration_seconds / 60)}:${String(Math.round(v.duration_seconds % 60)).padStart(2, '0')}` : '—'} · {new Date(v.created_at).toLocaleDateString()}
+                {recentReposts.map((r: any) => {
+                  const HUE: Record<string, string> = { done: 'teal', processing: 'blue', failed: 'pink', pending: 'amber', scheduled: 'purple' };
+                  const dests: PlatformId[] = (r.destinations || []) as PlatformId[];
+                  return (
+                    <div
+                      key={r.id}
+                      className="flex items-center gap-3.5 px-5 py-3 animate-enter"
+                      style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', transition: 'background 150ms ease' }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.02)'; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+                    >
+                      <Thumb w={60} h={36} hue={(HUE[r.status] || 'slate') as any} r={6} />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-sans font-medium truncate" style={{ fontSize: 13, color: '#F0EFF8' }}>{r.title || r.source_video_url}</div>
+                        <div className="flex items-center gap-2 mt-1">
+                          {dests.map((p: PlatformId) => <PlatformDot key={p} id={p} size={16} radius={4} />)}
+                          <span className="font-mono" style={{ fontSize: 10, color: 'rgba(240,239,248,0.25)' }}>{new Date(r.created_at).toLocaleDateString()}</span>
+                        </div>
                       </div>
+                      <StatusBadge status={r.status as any} />
                     </div>
-                    <StatusBadge status={v.status as any} />
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </Card>
@@ -414,6 +422,7 @@ function QueuePage() {
 
 /* ── Accounts page ──────────────────────────────────────────────────────────── */
 function AccountsPage() {
+  const navigate = useNavigate();
   const [accounts, setAccounts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -472,8 +481,9 @@ function AccountsPage() {
           <div className="flex flex-col gap-3.5 stagger">
             {(['youtube', 'tiktok', 'instagram'] as PlatformId[]).map((pid, i) => {
               const acc = accounts.find((a: any) => a.platform === pid);
-              const expired = acc?.status === 'paused' || acc?.token_expired;
-              const connected = !!acc && !expired;
+              const needsReconnect = acc?.connected === false;
+              const expired = needsReconnect || acc?.status === 'paused' || (acc?.expires_at && new Date(acc.expires_at) < new Date());
+              const connected = !!acc && !expired && !needsReconnect;
 
               return (
                 <div
@@ -481,11 +491,24 @@ function AccountsPage() {
                   className="relative rounded-2xl overflow-hidden animate-enter"
                   style={{
                     background: '#0F0F17',
-                    border: `1px solid ${connected ? 'rgba(14,210,160,0.16)' : expired ? 'rgba(245,166,35,0.22)' : 'rgba(255,255,255,0.07)'}`,
+                    border: `1px solid ${needsReconnect ? 'rgba(240,79,79,0.30)' : connected ? 'rgba(14,210,160,0.16)' : expired ? 'rgba(245,166,35,0.22)' : 'rgba(255,255,255,0.07)'}`,
                     animationDelay: `${i * 80}ms`,
                     transition: 'border-color 200ms ease',
                   }}
                 >
+                  {/* Reconnect required red banner */}
+                  {needsReconnect && (
+                    <div
+                      className="flex items-center justify-between px-5 py-2.5"
+                      style={{ background: 'rgba(240,79,79,0.10)', borderBottom: '1px solid rgba(240,79,79,0.20)' }}
+                    >
+                      <span className="font-sans font-medium" style={{ fontSize: 12, color: '#F04F4F' }}>
+                        ⚠ Reconnect required{acc?.error_message ? ` — ${acc.error_message}` : ''}
+                      </span>
+                      <Btn kind="primary" size="sm" icon={RefreshCw} onClick={() => connect(pid)}>Reconnect</Btn>
+                    </div>
+                  )}
+
                   {/* Ambient bg glow for connected */}
                   {connected && (
                     <div className="absolute inset-0 pointer-events-none" style={{
@@ -536,7 +559,7 @@ function AccountsPage() {
                         <Btn kind="primary" size="sm" icon={RefreshCw} onClick={() => connect(pid)}>Reconnect</Btn>
                       ) : (
                         <>
-                          <Btn kind="ghost" size="sm">Settings</Btn>
+                          <Btn kind="ghost" size="sm" onClick={() => navigate('/dashboard/settings')}>Settings</Btn>
                           <Btn kind="soft" size="sm" onClick={() => disconnect(acc.id)}>Disconnect</Btn>
                         </>
                       )}
@@ -724,8 +747,6 @@ export default function Dashboard() {
       <div className="flex-1 overflow-auto">
         <Routes>
           <Route path="/"               element={<Overview />} />
-          <Route path="/upload/*"       element={<UploadCenter />} />
-          <Route path="/library/*"      element={<VideoLibrary />} />
           <Route path="/repost/*"       element={<NewRepost />} />
           <Route path="/queue"          element={<QueuePage />} />
           <Route path="/auto-republish" element={<AutoRepublish />} />

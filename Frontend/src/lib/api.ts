@@ -23,17 +23,6 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
-async function uploadRequest<T>(path: string, formData: FormData): Promise<T> {
-  const token = getToken();
-  const res = await fetch(`${BASE}${path}`, {
-    method: "POST",
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    body: formData,
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "Upload failed");
-  return data as T;
-}
 
 export const api = {
   auth: {
@@ -83,30 +72,6 @@ export const api = {
     retry:    (jobId: string) => request<any>(`/api/auto-republish/${jobId}/retry`, { method: "PATCH" }),
   },
 
-  upload: {
-    create: (file: File, meta: { title: string; description?: string; tags?: string; mode?: string }) => {
-      const fd = new FormData();
-      fd.append("video", file);
-      fd.append("title", meta.title);
-      if (meta.description) fd.append("description", meta.description);
-      if (meta.tags)        fd.append("tags", meta.tags);
-      if (meta.mode)        fd.append("mode", meta.mode);
-      return uploadRequest<any>("/api/upload", fd);
-    },
-    list:        () => request<any[]>("/api/upload"),
-    get:         (id: string) => request<any>(`/api/upload/${id}`),
-    analyze:     (id: string) => request<any>(`/api/upload/${id}/analyze`, { method: "POST" }),
-    process:     (id: string, config?: any) =>
-      request<any>(`/api/upload/${id}/process`, { method: "POST", body: JSON.stringify(config || {}) }),
-    distribute:  (id: string, config?: any) =>
-      request<any>(`/api/upload/${id}/distribute`, { method: "POST", body: JSON.stringify(config || {}) }),
-    clips:       (videoId: string) => request<any[]>(`/api/upload/${videoId}/clips`),
-    approveClip: (clipId: string) => request<any>(`/api/upload/clips/${clipId}/approve`, { method: "POST" }),
-    deleteClip:  (clipId: string) => request(`/api/upload/clips/${clipId}`, { method: "DELETE" }),
-    delete:      (id: string) => request(`/api/upload/${id}`, { method: "DELETE" }),
-    stats:       () => request<any>("/api/upload/stats/overview"),
-    logs:        () => request<any[]>("/api/upload/logs/all"),
-  },
 };
 
 export { getToken, getAuthHeaders };
