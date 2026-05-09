@@ -1,6 +1,6 @@
 import React from 'react';
 
-type Status = 'pending' | 'processing' | 'done' | 'success' | 'failed' | 'scheduled' | 'uploading' | 'paused' | 'active' | 'trial' | 'pro';
+type Status = 'pending' | 'processing' | 'done' | 'success' | 'failed' | 'scheduled' | 'uploading' | 'paused' | 'active' | 'trial' | 'pro' | 'free';
 
 const STATUS_MAP: Record<Status, { bg: string; fg: string; label: string }> = {
   pending:    { bg: 'rgba(245,166,35,0.10)',  fg: '#F5A623', label: 'pending' },
@@ -14,7 +14,9 @@ const STATUS_MAP: Record<Status, { bg: string; fg: string; label: string }> = {
   active:     { bg: 'rgba(14,210,160,0.10)',  fg: '#0ED2A0', label: 'active' },
   trial:      { bg: 'rgba(108,71,255,0.12)',  fg: '#8B6AFF', label: 'trial' },
   pro:        { bg: 'rgba(108,71,255,0.12)',  fg: '#8B6AFF', label: 'pro' },
+  free:       { bg: 'rgba(255,255,255,0.06)', fg: 'rgba(240,239,248,0.50)', label: 'free plan' },
 };
+
 
 interface Props {
   status: Status;

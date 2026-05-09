@@ -37,6 +37,7 @@ function Overview() {
   const [bestTime, setBestTime] = useState<string | null>(null);
   const [autoActive, setAutoActive] = useState(false);
   const [accounts, setAccounts] = useState<any[]>([]);
+  const [user, setUser] = useState<any>(null);
 
   useEffect(() => {
     api.reposts.list().then((rs: any[]) => {
@@ -51,6 +52,7 @@ function Overview() {
     api.bestTime.get().then((d: any) => d?.best_hour != null && setBestTime(`${d.best_hour}:00`)).catch(() => {});
     api.accounts.autoRepublishStatus().then((arr: any[]) => setAutoActive(arr.some((a: any) => a.auto_republish_enabled))).catch(() => {});
     api.accounts.list().then((d: any[]) => setAccounts(d ?? [])).catch(() => {});
+    api.auth.me().then(setUser).catch(() => {});
   }, []);
 
   const HUE_MAP: Record<string, string> = { done: 'teal', processing: 'blue', failed: 'pink', pending: 'amber' };
@@ -82,7 +84,7 @@ function Overview() {
                 {getGreeting()} <span className="text-gradient-brand">— let's distribute.</span>
               </h1>
               <div className="flex items-center gap-3 mt-3">
-                <StatusBadge status="pro" />
+                <StatusBadge status={user?.plan || 'free'} />
                 {autoActive && (
                   <span
                     className="inline-flex items-center gap-1.5 font-sans font-medium rounded-full"
@@ -578,7 +580,7 @@ function BillingPage() {
     } catch {}
   };
 
-  const isPro = plan?.plan_type === 'pro';
+  const isPro = plan?.plan === 'pro' || plan?.plan === 'team';
 
   return (
     <main className="flex-1 overflow-auto" style={{ background: '#08080E' }}>
