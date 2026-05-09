@@ -1,74 +1,94 @@
-import React, { useState, useEffect } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import { LogOut, LayoutDashboard } from "lucide-react";
-import { useAuth } from "../contexts/AuthContext";
+import React from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { ArrowRight } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+
+const NAV_ITEMS: [string, string][] = [
+  ['/about',   'About'],
+  ['/pricing', 'Pricing'],
+  ['/contact', 'Contact'],
+];
 
 export default function Navbar() {
-  const { user, logout } = useAuth();
-  const location  = useLocation();
-  const navigate  = useNavigate();
-  const [scrolled, setScrolled] = useState(false);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { user } = useAuth();
 
-  useEffect(() => {
-    const h = () => setScrolled(window.scrollY > 20);
-    window.addEventListener("scroll", h);
-    return () => window.removeEventListener("scroll", h);
-  }, []);
+  if (location.pathname.startsWith('/dashboard')) return null;
+  if (location.pathname === '/login' || location.pathname === '/register') return null;
 
-  // Dashboard has its own sidebar nav
-  if (location.pathname.startsWith("/dashboard")) return null;
-
-  const links = [
-    { to: "/",        label: "Home"    },
-    { to: "/about",   label: "About"   },
-    { to: "/pricing", label: "Pricing" },
-    { to: "/contact", label: "Contact" },
-  ];
+  const isHome = location.pathname === '/';
 
   return (
-    <nav style={{
-      position: "fixed", top: 0, left: 0, right: 0, zIndex: 100,
-      padding: "16px 48px", display: "flex", alignItems: "center", gap: 24,
-      transition: "all 0.3s",
-      ...(scrolled ? {
-        background: "rgba(247,246,242,0.94)",
-        backdropFilter: "blur(16px)",
-        borderBottom: "1px solid rgba(0,0,0,0.07)",
-      } : {}),
-    }}>
-      <Link to="/" style={{ fontFamily: "'Syne',sans-serif", fontSize: 17, fontWeight: 800, letterSpacing: -0.5, color: "#0E0D0B", textDecoration: "none" }}>
+    <nav
+      className="flex items-center gap-8 sticky top-0 z-50"
+      style={{
+        padding: '20px 56px',
+        background: 'rgba(245,244,240,0.85)',
+        backdropFilter: 'blur(20px)',
+        borderBottom: '1px solid rgba(0,0,0,0.06)',
+      }}
+    >
+      <Link
+        to="/"
+        className="font-display font-extrabold flex-shrink-0"
+        style={{ fontSize: 17, letterSpacing: '-0.03em', color: '#0C0B09', textDecoration: 'none' }}
+      >
         Redistribute
       </Link>
 
-      <div style={{ display: "flex", gap: 2, flex: 1, marginLeft: 12 }}>
-        {links.map(l => (
-          <Link key={l.to} to={l.to} style={{
-            padding: "7px 12px", fontSize: 13, borderRadius: 8, textDecoration: "none",
-            color: location.pathname === l.to ? "white" : "#6B6960",
-            fontWeight: location.pathname === l.to ? 600 : 400,
-            background: location.pathname === l.to ? "#0E0D0B" : "transparent",
-            transition: "all 0.14s",
-          }}>{l.label}</Link>
+      <div className="flex-1 flex justify-center gap-1">
+        <NavItem to="/" label="Home" active={isHome} />
+        {NAV_ITEMS.map(([to, label]) => (
+          <NavItem key={to} to={to} label={label} active={location.pathname === to} />
         ))}
       </div>
 
-      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+      <div className="flex items-center gap-2.5 flex-shrink-0">
         {user ? (
-          <>
-            <Link to="/dashboard" style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", background: "#0E0D0B", color: "white", borderRadius: 100, fontSize: 13, fontWeight: 500, textDecoration: "none" }}>
-              <LayoutDashboard size={14} /> Dashboard
-            </Link>
-            <button onClick={() => { logout(); navigate("/"); }} style={{ display: "flex", alignItems: "center", gap: 5, padding: "8px 14px", background: "transparent", border: "1px solid rgba(0,0,0,0.1)", borderRadius: 100, fontSize: 13, color: "#6B6960", cursor: "pointer" }}>
-              <LogOut size={13} /> Sign out
-            </button>
-          </>
+          <button
+            onClick={() => navigate('/dashboard')}
+            className="flex items-center gap-1.5 rounded-full font-sans font-medium"
+            style={{ background: '#0C0B09', color: '#fff', border: 'none', padding: '8px 18px', fontSize: 13, cursor: 'pointer' }}
+          >
+            Dashboard <ArrowRight size={13} />
+          </button>
         ) : (
           <>
-            <Link to="/login"    style={{ padding: "8px 16px", background: "transparent", border: "1px solid rgba(0,0,0,0.1)", borderRadius: 100, fontSize: 13, color: "#6B6960", textDecoration: "none" }}>Log in</Link>
-            <Link to="/register" style={{ padding: "8px 18px", background: "#0E0D0B", color: "white", borderRadius: 100, fontSize: 13, fontWeight: 500, textDecoration: "none" }}>Get started →</Link>
+            <Link
+              to="/login"
+              style={{ color: '#706D64', fontSize: 13, textDecoration: 'none', fontFamily: 'Inter, sans-serif', fontWeight: 500 }}
+            >
+              Log in
+            </Link>
+            <Link
+              to="/register"
+              className="flex items-center gap-1.5 rounded-full font-sans font-medium"
+              style={{ background: '#0C0B09', color: '#fff', padding: '8px 18px', fontSize: 13, textDecoration: 'none' }}
+            >
+              Get started <ArrowRight size={13} />
+            </Link>
           </>
         )}
       </div>
     </nav>
+  );
+}
+
+function NavItem({ to, label, active }: { to: string; label: string; active: boolean }) {
+  return (
+    <Link
+      to={to}
+      className="rounded-full font-sans font-medium transition-colors"
+      style={{
+        padding: '6px 14px',
+        background: active ? '#0C0B09' : 'transparent',
+        color: active ? '#F5F4F0' : '#706D64',
+        fontSize: 13,
+        textDecoration: 'none',
+      }}
+    >
+      {label}
+    </Link>
   );
 }

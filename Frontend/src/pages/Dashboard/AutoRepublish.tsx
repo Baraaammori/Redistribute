@@ -1,48 +1,40 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { Repeat2, CheckCircle, Loader2, AlertCircle, Clock, RefreshCw, Zap } from "lucide-react";
-import { api } from "../../lib/api";
+import { useState, useEffect, useCallback } from 'react';
+import { Repeat2, CheckCircle, Loader2, AlertCircle, Clock, RefreshCw, Zap } from 'lucide-react';
+import { api } from '../../lib/api';
+import { PlatformDot, PlatformId } from '../../components/ui/PlatformDot';
 
-// ── Types ─────────────────────────────────────────────────────────────────────
 interface AutoJob {
   id: string;
   source_platform: string;
   video_title: string;
   target_platforms: string[];
-  status: "pending" | "processing" | "done" | "failed";
+  status: 'pending' | 'processing' | 'done' | 'failed';
   error_message?: string;
   triggered_at: string;
   completed_at?: string;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-const PLATFORM_ICONS: Record<string, string> = {
-  youtube:   "▶️",
-  tiktok:    "🎵",
-  instagram: "📸",
-};
-
 function timeAgo(iso: string) {
   const diff = Date.now() - new Date(iso).getTime();
   const m = Math.floor(diff / 60_000);
-  if (m < 1) return "just now";
+  if (m < 1) return 'just now';
   if (m < 60) return `${m}m ago`;
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
 }
 
-const STATUS_CONFIG = {
-  pending:    { label: "Pending",    color: "#F0C94A", bg: "rgba(240,201,74,0.12)",   icon: <Clock size={11} />  },
-  processing: { label: "Processing", color: "#60A5FA", bg: "rgba(96,165,250,0.12)",   icon: <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} /> },
-  done:       { label: "Done",       color: "#1FCFA0", bg: "rgba(31,207,160,0.12)",   icon: <CheckCircle size={11} /> },
-  failed:     { label: "Failed",     color: "#EF4444", bg: "rgba(239,68,68,0.12)",    icon: <AlertCircle size={11} /> },
+const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
+  pending:    { label: 'Pending',    color: '#F5A623', bg: 'rgba(245,166,35,0.12)',  icon: <Clock     size={11} /> },
+  processing: { label: 'Processing', color: '#4F8EF0', bg: 'rgba(79,142,240,0.12)', icon: <Loader2   size={11} className="animate-spin" /> },
+  done:       { label: 'Done',       color: '#0ED2A0', bg: 'rgba(14,210,160,0.12)', icon: <CheckCircle size={11} /> },
+  failed:     { label: 'Failed',     color: '#F04F4F', bg: 'rgba(240,79,79,0.12)',  icon: <AlertCircle size={11} /> },
 };
 
-const sectionBox: React.CSSProperties = {
-  background: "#111118", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 16, padding: "20px 24px",
+const PLATFORM_IDS: Record<string, PlatformId> = {
+  youtube: 'youtube', tiktok: 'tiktok', instagram: 'instagram',
 };
 
-// ── Component ─────────────────────────────────────────────────────────────────
 export default function AutoRepublish() {
   const [jobs, setJobs]       = useState<AutoJob[]>([]);
   const [loading, setLoading] = useState(true);
@@ -64,127 +56,115 @@ export default function AutoRepublish() {
 
   const handleRetry = async (jobId: string) => {
     setRetrying(jobId);
-    try {
-      await api.autoRepublish.retry(jobId);
-      await load(true);
-    } catch {
-      /* handled silently */
-    } finally {
-      setRetrying(null);
-    }
+    try { await api.autoRepublish.retry(jobId); await load(true); }
+    catch {} finally { setRetrying(null); }
   };
 
-  // ── Stats ──────────────────────────────────────────────────────────────────
   const now   = new Date();
   const month = new Date(now.getFullYear(), now.getMonth(), 1);
-  const doneThisMonth = jobs.filter(
-    j => j.status === "done" && new Date(j.triggered_at) >= month
-  ).length;
-  const lastActivity = jobs[0]?.triggered_at;
+  const doneThisMonth = jobs.filter(j => j.status === 'done' && new Date(j.triggered_at) >= month).length;
+  const lastActivity  = jobs[0]?.triggered_at;
 
   const stats = [
-    { label: "Auto-republished this month", value: doneThisMonth,                icon: "🚀" },
-    { label: "Total auto jobs",             value: jobs.length,                  icon: "🔄" },
-    { label: "Last activity",               value: lastActivity ? timeAgo(lastActivity) : "—", icon: "🕐" },
+    { label: 'Auto-republished this month', value: String(doneThisMonth), icon: Zap },
+    { label: 'Total auto jobs',             value: String(jobs.length),   icon: Repeat2 },
+    { label: 'Last activity',               value: lastActivity ? timeAgo(lastActivity) : '—', icon: Clock },
   ];
 
   return (
-    <div style={{ padding: 40, maxWidth: 1000 }}>
+    <div className="p-10" style={{ maxWidth: 1000 }}>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
-        <Repeat2 size={24} color="#9B7EFF" />
-        <h1 style={{ fontFamily: "'Syne',sans-serif", fontSize: 28, fontWeight: 800, color: "white", letterSpacing: -1 }}>
+      <div className="flex items-center gap-3 mb-2">
+        <Repeat2 size={22} className="text-rd-purple" />
+        <h1 className="font-display font-extrabold text-rd-text m-0" style={{ fontSize: 28, letterSpacing: '-0.04em' }}>
           Auto-Republish Activity
         </h1>
       </div>
-      <p style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", fontWeight: 300, marginBottom: 32 }}>
+      <p className="font-sans text-rd-text2 mt-1 mb-8" style={{ fontSize: 13 }}>
         Videos automatically detected and redistributed from your connected platforms.
       </p>
 
-      {/* Stats row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginBottom: 32 }}>
-        {stats.map(s => (
-          <div key={s.label} style={sectionBox}>
-            <div style={{ fontSize: 24, marginBottom: 8 }}>{s.icon}</div>
-            <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 28, fontWeight: 800, color: "white", letterSpacing: -1 }}>
-              {s.value}
+      {/* Stats */}
+      <div className="grid gap-4 mb-8" style={{ gridTemplateColumns: 'repeat(3,1fr)' }}>
+        {stats.map(({ label, value, icon: Icon }) => (
+          <div key={label} className="rounded-2xl" style={{ background: '#0F0F17', border: '1px solid rgba(255,255,255,0.06)', padding: '20px 24px' }}>
+            <div className="flex items-center justify-center rounded-xl mb-4" style={{ width: 36, height: 36, background: 'rgba(108,71,255,0.12)' }}>
+              <Icon size={16} className="text-rd-purple" />
             </div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 4 }}>{s.label}</div>
+            <div className="font-display font-extrabold text-rd-text mb-1" style={{ fontSize: 28, letterSpacing: '-0.04em' }}>{value}</div>
+            <div className="font-sans text-rd-text2" style={{ fontSize: 11 }}>{label}</div>
           </div>
         ))}
       </div>
 
       {/* Activity feed */}
-      <div style={sectionBox}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Zap size={15} color="#9B7EFF" />
-            <span style={{ fontFamily: "'Syne',sans-serif", fontSize: 15, fontWeight: 700, color: "white" }}>
-              Activity Feed
-            </span>
+      <div className="rounded-2xl" style={{ background: '#0F0F17', border: '1px solid rgba(255,255,255,0.06)', padding: '20px 24px' }}>
+        <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center gap-2">
+            <Zap size={14} className="text-rd-purple" />
+            <span className="font-display font-bold text-rd-text" style={{ fontSize: 15 }}>Activity feed</span>
           </div>
-          <button onClick={() => load()} style={{ display: "flex", alignItems: "center", gap: 5, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 100, padding: "6px 14px", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 12 }}>
-            <RefreshCw size={12} /> Refresh
+          <button onClick={() => load()}
+            className="inline-flex items-center gap-1.5 rounded-full font-sans"
+            style={{ padding: '6px 14px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(240,239,248,0.40)', cursor: 'pointer', fontSize: 12 }}>
+            <RefreshCw size={11} /> Refresh
           </button>
         </div>
 
         {loading ? (
-          <div style={{ textAlign: "center", padding: "40px 0", color: "rgba(255,255,255,0.25)", fontSize: 14 }}>
-            Loading…
-          </div>
+          <div className="text-center py-10 font-sans text-rd-text2" style={{ fontSize: 14 }}>Loading…</div>
         ) : jobs.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "48px 0" }}>
-            <Repeat2 size={32} color="rgba(255,255,255,0.1)" style={{ marginBottom: 12 }} />
-            <div style={{ fontSize: 14, color: "rgba(255,255,255,0.3)" }}>No auto-republish activity yet.</div>
-            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.2)", marginTop: 6 }}>
-              Enable auto-republish on a platform in <strong style={{ color: "rgba(155,126,255,0.6)" }}>Accounts</strong> to get started.
+          <div className="text-center py-12">
+            <Repeat2 size={32} color="rgba(240,239,248,0.08)" style={{ margin: '0 auto 10px' }} />
+            <div className="font-sans text-rd-text2 mb-1.5" style={{ fontSize: 14 }}>No auto-republish activity yet.</div>
+            <div className="font-sans" style={{ fontSize: 12, color: 'rgba(240,239,248,0.20)' }}>
+              Enable auto-republish on a platform in <strong style={{ color: 'rgba(139,106,255,0.60)' }}>Accounts</strong> to get started.
             </div>
           </div>
         ) : (
           <>
             {/* Column headers */}
-            <div style={{ display: "grid", gridTemplateColumns: "40px 1fr 160px 110px 100px 80px", gap: 12, padding: "0 4px 10px", borderBottom: "1px solid rgba(255,255,255,0.05)", marginBottom: 4 }}>
-              {["", "Video", "Distributed to", "Status", "Time", ""].map((h, i) => (
-                <div key={i} style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 1 }}>{h}</div>
-              ))}
+            <div className="grid font-sans font-semibold uppercase text-rd-text2 pb-3 px-1 mb-1"
+              style={{ gridTemplateColumns: '36px 1fr 140px 110px 90px 80px', gap: 12, borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: 10, letterSpacing: '0.06em' }}>
+              {['', 'Video', 'Distributed to', 'Status', 'Time', ''].map((h, i) => <div key={i}>{h}</div>)}
             </div>
 
             {jobs.map(j => {
               const sc = STATUS_CONFIG[j.status] || STATUS_CONFIG.pending;
+              const srcId = PLATFORM_IDS[j.source_platform];
               return (
-                <div key={j.id} style={{ display: "grid", gridTemplateColumns: "40px 1fr 160px 110px 100px 80px", gap: 12, alignItems: "center", padding: "12px 4px", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                  {/* Source icon */}
-                  <div style={{ fontSize: 20, lineHeight: 1 }}>{PLATFORM_ICONS[j.source_platform] || "📹"}</div>
+                <div key={j.id} className="grid items-center px-1 py-3"
+                  style={{ gridTemplateColumns: '36px 1fr 140px 110px 90px 80px', gap: 12, borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                  {/* Source */}
+                  <div>{srcId && <PlatformDot id={srcId} size={28} radius={6} />}</div>
 
                   {/* Title */}
-                  <div style={{ fontSize: 13, color: "rgba(255,255,255,0.8)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {j.video_title || "Untitled"}
-                  </div>
+                  <div className="font-sans text-rd-text truncate" style={{ fontSize: 13 }}>{j.video_title || 'Untitled'}</div>
 
                   {/* Targets */}
-                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                    {(j.target_platforms || []).map(t => (
-                      <span key={t} title={t} style={{ fontSize: 16 }}>{PLATFORM_ICONS[t] || t}</span>
-                    ))}
+                  <div className="flex gap-1.5 flex-wrap">
+                    {(j.target_platforms || []).map(t => {
+                      const tid = PLATFORM_IDS[t];
+                      return tid ? <PlatformDot key={t} id={tid} size={22} radius={5} /> : null;
+                    })}
                   </div>
 
                   {/* Status badge */}
-                  <div style={{ display: "inline-flex", alignItems: "center", gap: 5, background: sc.bg, color: sc.color, borderRadius: 100, padding: "4px 10px", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap" }}>
-                    {sc.icon} {sc.label}
+                  <div className="inline-flex items-center gap-1.5 rounded-full font-mono font-bold"
+                    style={{ padding: '4px 10px', background: sc.bg, color: sc.color, fontSize: 10, letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
+                    {sc.icon} {sc.label.toUpperCase()}
                   </div>
 
                   {/* Time */}
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>{timeAgo(j.triggered_at)}</div>
+                  <div className="font-mono text-rd-text2" style={{ fontSize: 11 }}>{timeAgo(j.triggered_at)}</div>
 
-                  {/* Retry button */}
+                  {/* Retry */}
                   <div>
-                    {j.status === "failed" && (
-                      <button
-                        disabled={retrying === j.id}
-                        onClick={() => handleRetry(j.id)}
-                        style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", background: "rgba(124,92,252,0.15)", border: "1px solid rgba(124,92,252,0.3)", borderRadius: 8, color: "#9B7EFF", cursor: retrying === j.id ? "not-allowed" : "pointer", fontSize: 11, opacity: retrying === j.id ? 0.5 : 1 }}
-                      >
-                        {retrying === j.id ? <Loader2 size={10} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={10} />}
+                    {j.status === 'failed' && (
+                      <button disabled={retrying === j.id} onClick={() => handleRetry(j.id)}
+                        className="inline-flex items-center gap-1.5 rounded-lg font-sans"
+                        style={{ padding: '5px 10px', background: 'rgba(108,71,255,0.12)', border: '1px solid rgba(108,71,255,0.25)', color: '#8B6AFF', cursor: retrying === j.id ? 'not-allowed' : 'pointer', fontSize: 11, opacity: retrying === j.id ? 0.5 : 1 }}>
+                        {retrying === j.id ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
                         Retry
                       </button>
                     )}
@@ -195,8 +175,6 @@ export default function AutoRepublish() {
           </>
         )}
       </div>
-
-      <style>{`@keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }`}</style>
     </div>
   );
 }

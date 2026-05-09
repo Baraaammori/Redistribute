@@ -1,240 +1,309 @@
-import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
-import { api } from "../../lib/api";
-import { SchedulePicker } from "../../components/SchedulePicker";
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Link2, FolderOpen, ArrowRight, Check, Loader2 } from 'lucide-react';
+import { api } from '../../lib/api';
+import { SchedulePicker } from '../../components/SchedulePicker';
+import { PlatformDot, PlatformId } from '../../components/ui/PlatformDot';
 
-function StatusPill({ status }: { status: string }) {
-  const map: Record<string,{bg:string,color:string,label:string}> = {
-    done:       { bg:"rgba(31,207,160,0.15)", color:"#1FCFA0", label:"Done" },
-    pending:    { bg:"rgba(240,201,74,0.15)",  color:"#F0C94A", label:"Pending" },
-    scheduled:  { bg:"rgba(124,92,252,0.15)", color:"#9B7EFF", label:"Scheduled" },
-    processing: { bg:"rgba(59,130,246,0.15)", color:"#60A5FA", label:"Processing" },
-    failed:     { bg:"rgba(239,68,68,0.15)",  color:"#EF4444", label:"Failed" },
-  };
-  const s = map[status] || map.pending;
-  return <span style={{ background:s.bg, color:s.color, borderRadius:100, padding:"3px 12px", fontSize:11, fontWeight:600, whiteSpace:"nowrap" }}>{s.label}</span>;
+// ── Wizard step indicator ─────────────────────────────────────────────────────
+function WizardSteps({ steps, active }: { steps: string[]; active: number }) {
+  return (
+    <div className="flex items-center gap-0 mb-9">
+      {steps.map((s, i) => (
+        <div key={s} className="flex items-center">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full"
+            style={{ background: i === active ? 'rgba(108,71,255,0.15)' : 'transparent' }}>
+            <div className="flex items-center justify-center rounded-full font-mono font-bold text-white"
+              style={{
+                width: 20, height: 20, fontSize: 10,
+                background: i < active ? '#0ED2A0' : i === active ? '#6C47FF' : 'rgba(255,255,255,0.10)',
+              }}>
+              {i < active ? <Check size={10} /> : i + 1}
+            </div>
+            <span className="font-sans" style={{
+              fontSize: 12,
+              color: i === active ? '#8B6AFF' : i < active ? 'rgba(240,239,248,0.60)' : 'rgba(240,239,248,0.25)',
+            }}>{s}</span>
+          </div>
+          {i < steps.length - 1 && (
+            <div style={{ width: 24, height: 1, background: 'rgba(255,255,255,0.08)' }} />
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
 
-export { StatusPill };
+const PLATFORMS: PlatformId[] = ['youtube', 'tiktok', 'instagram'];
+const PLATFORM_LABELS: Record<string, string> = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram' };
 
+function detectPlatform(url: string): PlatformId | '' {
+  if (/youtube\.com|youtu\.be/.test(url)) return 'youtube';
+  if (/tiktok\.com/.test(url)) return 'tiktok';
+  if (/instagram\.com/.test(url)) return 'instagram';
+  return '';
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
 export default function NewRepost() {
-  const [mode, setMode] = useState<"select"|"url"|null>(null);
-  const [step, setStep] = useState(0);
-  const [source, setSource] = useState("");
-  const [videos, setVideos] = useState<any[]>([]);
+  const navigate  = useNavigate();
+  const [mode, setMode]                 = useState<'url' | 'select' | null>(null);
+  const [step, setStep]                 = useState(0);
+  const [source, setSource]             = useState<PlatformId | ''>('');
+  const [videos, setVideos]             = useState<any[]>([]);
   const [loadingVideos, setLoadingVideos] = useState(false);
   const [selectedVideo, setSelectedVideo] = useState<any>(null);
   const [destinations, setDestinations] = useState<string[]>([]);
-  const [schedule, setSchedule] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [done, setDone] = useState(false);
-  const [pastedUrl, setPastedUrl] = useState("");
-  const [urlTitle, setUrlTitle] = useState("");
-  const navigate = useNavigate();
-
-  const platforms = ["youtube","tiktok","instagram"];
-
-  const detectPlatform = (url: string) => {
-    if (/youtube\.com|youtu\.be/.test(url)) return "youtube";
-    if (/tiktok\.com/.test(url)) return "tiktok";
-    if (/instagram\.com/.test(url)) return "instagram";
-    return "";
-  };
+  const [schedule, setSchedule]         = useState('');
+  const [submitting, setSubmitting]     = useState(false);
+  const [done, setDone]                 = useState(false);
+  const [pastedUrl, setPastedUrl]       = useState('');
+  const [urlTitle, setUrlTitle]         = useState('');
 
   const loadVideos = async (platform: string) => {
     setLoadingVideos(true);
-    try { const v = await api.videos.list(platform); setVideos(v); } catch { setVideos([]); }
+    try { const v = await api.videos.list(platform); setVideos(v); }
+    catch { setVideos([]); }
     finally { setLoadingVideos(false); }
   };
 
   const handleUrlSubmit = () => {
     const detected = detectPlatform(pastedUrl);
-    if (!detected) { alert("Please paste a valid YouTube, TikTok, or Instagram URL."); return; }
+    if (!detected) { alert('Please paste a valid YouTube, TikTok, or Instagram URL.'); return; }
     setSource(detected);
     setSelectedVideo({ id: `url_${Date.now()}`, url: pastedUrl, title: urlTitle || `${detected} video`, thumbnail: null });
     setStep(2);
   };
 
-  const toggleDest = (p: string) => setDestinations(prev => prev.includes(p) ? prev.filter(d=>d!==p) : [...prev,p]);
+  const toggleDest = (p: string) =>
+    setDestinations(prev => prev.includes(p) ? prev.filter(d => d !== p) : [...prev, p]);
 
   const submit = async () => {
     if (!selectedVideo || !destinations.length) return;
     setSubmitting(true);
     try {
-      await api.reposts.create({ sourceVideoId: selectedVideo.id, sourceVideoUrl: selectedVideo.url, sourcePlatform: source, title: selectedVideo.title, thumbnailUrl: selectedVideo.thumbnail, destinations, scheduledFor: schedule || null });
+      await api.reposts.create({
+        sourceVideoId: selectedVideo.id, sourceVideoUrl: selectedVideo.url,
+        sourcePlatform: source, title: selectedVideo.title,
+        thumbnailUrl: selectedVideo.thumbnail, destinations,
+        scheduledFor: schedule || null,
+      });
       setDone(true);
-    } catch(err:any) { alert(err.message); }
+    } catch (err: any) { alert(err.message); }
     finally { setSubmitting(false); }
   };
 
-  const resetAll = () => { setDone(false); setMode(null); setStep(0); setSource(""); setSelectedVideo(null); setDestinations([]); setSchedule(""); setPastedUrl(""); setUrlTitle(""); };
+  const reset = () => {
+    setDone(false); setMode(null); setStep(0); setSource(''); setSelectedVideo(null);
+    setDestinations([]); setSchedule(''); setPastedUrl(''); setUrlTitle('');
+  };
 
+  const stepsUrl    = ['Paste URL', 'Destinations', 'Schedule'];
+  const stepsSelect = ['Source', 'Pick video', 'Destinations', 'Schedule'];
+  const steps       = mode === 'url' ? stepsUrl : stepsSelect;
+  const activeStep  = mode === 'url' ? step - 1 : step;
+
+  // ── Done ─────────────────────────────────────────────────────────────────
   if (done) return (
-    <div style={{ padding:40, textAlign:"center", maxWidth:500, margin:"80px auto" }}>
-      <div style={{ fontSize:56, marginBottom:16 }}>🎉</div>
-      <div style={{ fontFamily:"'Syne',sans-serif", fontSize:28, fontWeight:800, color:"white", marginBottom:10 }}>Repost queued!</div>
-      <div style={{ fontSize:14, color:"rgba(255,255,255,0.4)", marginBottom:28, fontWeight:300 }}>Your video is being distributed. Check the queue to track progress.</div>
-      <div style={{ display:"flex", gap:10, justifyContent:"center" }}>
-        <button onClick={()=>navigate("/dashboard/queue")} style={{ padding:"10px 22px", background:"#7C5CFC", color:"white", border:"none", borderRadius:100, fontSize:14, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>View queue →</button>
-        <button onClick={resetAll} style={{ padding:"10px 22px", background:"rgba(255,255,255,0.06)", color:"rgba(255,255,255,0.6)", border:"none", borderRadius:100, fontSize:14, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>New repost</button>
+    <div className="p-10 flex flex-col items-center text-center" style={{ maxWidth: 480, margin: '60px auto' }}>
+      <div className="flex items-center justify-center rounded-full mb-5" style={{ width: 56, height: 56, background: 'rgba(14,210,160,0.15)' }}>
+        <Check size={24} className="text-rd-teal" />
+      </div>
+      <h2 className="font-display font-extrabold text-rd-text m-0 mb-2" style={{ fontSize: 28, letterSpacing: '-0.04em' }}>Repost queued!</h2>
+      <p className="font-sans text-rd-text2 mb-7" style={{ fontSize: 13 }}>Your video is being distributed. Check the queue to track progress.</p>
+      <div className="flex gap-3">
+        <button onClick={() => navigate('/dashboard/queue')}
+          className="inline-flex items-center gap-2 rounded-full font-sans font-medium"
+          style={{ padding: '10px 22px', background: '#6C47FF', color: '#fff', border: 'none', fontSize: 14, cursor: 'pointer', boxShadow: '0 0 20px rgba(108,71,255,0.30)' }}>
+          View queue <ArrowRight size={14} />
+        </button>
+        <button onClick={reset}
+          className="rounded-full font-sans"
+          style={{ padding: '10px 22px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(240,239,248,0.60)', fontSize: 14, cursor: 'pointer' }}>
+          New repost
+        </button>
       </div>
     </div>
   );
 
-  // Mode selection screen
+  // ── Mode selection ────────────────────────────────────────────────────────
   if (!mode) return (
-    <div style={{ padding:40, maxWidth:700 }}>
-      <h1 style={{ fontFamily:"'Syne',sans-serif", fontSize:28, fontWeight:800, color:"white", letterSpacing:-1, marginBottom:8 }}>New Repost</h1>
-      <div style={{ fontSize:15, color:"rgba(255,255,255,0.5)", marginBottom:28, fontWeight:300 }}>How would you like to add the video?</div>
-      <div style={{ display:"flex", gap:16 }}>
-        <button onClick={()=>{ setMode("url"); setStep(1); }}
-          style={{ flex:1, padding:"32px 24px", background:"linear-gradient(145deg, rgba(124,92,252,0.12), rgba(31,207,160,0.06))", border:"1px solid rgba(124,92,252,0.2)", borderRadius:18, cursor:"pointer", textAlign:"left", transition:"all 0.2s" }}
-          onMouseEnter={e=>(e.currentTarget.style.borderColor="rgba(124,92,252,0.5)")}
-          onMouseLeave={e=>(e.currentTarget.style.borderColor="rgba(124,92,252,0.2)")}>
-          <div style={{ fontSize:32, marginBottom:12 }}>🔗</div>
-          <div style={{ fontFamily:"'Syne',sans-serif", fontSize:18, fontWeight:700, color:"white", marginBottom:6 }}>Paste a URL</div>
-          <div style={{ fontSize:13, color:"rgba(255,255,255,0.4)", fontWeight:300, lineHeight:1.5 }}>
-            Paste a YouTube, TikTok, or Instagram link. TikTok videos are downloaded <strong style={{color:"#1FCFA0"}}>without watermark</strong>.
-          </div>
-        </button>
-        <button onClick={()=>{ setMode("select"); setStep(0); }}
-          style={{ flex:1, padding:"32px 24px", background:"#111118", border:"1px solid rgba(255,255,255,0.07)", borderRadius:18, cursor:"pointer", textAlign:"left", transition:"all 0.2s" }}
-          onMouseEnter={e=>(e.currentTarget.style.borderColor="rgba(255,255,255,0.15)")}
-          onMouseLeave={e=>(e.currentTarget.style.borderColor="rgba(255,255,255,0.07)")}>
-          <div style={{ fontSize:32, marginBottom:12 }}>📂</div>
-          <div style={{ fontFamily:"'Syne',sans-serif", fontSize:18, fontWeight:700, color:"white", marginBottom:6 }}>Select from Account</div>
-          <div style={{ fontSize:13, color:"rgba(255,255,255,0.4)", fontWeight:300, lineHeight:1.5 }}>
-            Browse your connected YouTube account and pick a video to redistribute.
-          </div>
-        </button>
-      </div>
-    </div>
-  );
-
-  const steps = mode === "url" ? ["Paste URL","Destinations","Schedule"] : ["Source platform","Pick video","Destinations","Schedule"];
-  const activeStep = mode === "url" ? step - 1 : step;
-
-  return (
-    <div style={{ padding:40, maxWidth:700 }}>
-      <h1 style={{ fontFamily:"'Syne',sans-serif", fontSize:28, fontWeight:800, color:"white", letterSpacing:-1, marginBottom:8 }}>New Repost</h1>
-      {/* Progress bar */}
-      <div style={{ display:"flex", gap:0, marginBottom:36 }}>
-        {steps.map((s,i) => (
-          <div key={s} style={{ display:"flex", alignItems:"center", gap:0 }}>
-            <div style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 14px", borderRadius:100, background: i===activeStep?"rgba(124,92,252,0.2)":"transparent" }}>
-              <span style={{ width:20, height:20, borderRadius:"50%", background: i<activeStep?"#1FCFA0":i===activeStep?"#7C5CFC":"rgba(255,255,255,0.1)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700, color:"white" }}>{i<activeStep?"✓":i+1}</span>
-              <span style={{ fontSize:12, color: i===activeStep?"#9B7EFF":i<activeStep?"rgba(255,255,255,0.6)":"rgba(255,255,255,0.25)" }}>{s}</span>
+    <div className="p-10" style={{ maxWidth: 680 }}>
+      <h1 className="font-display font-extrabold text-rd-text m-0 mb-2" style={{ fontSize: 28, letterSpacing: '-0.04em' }}>New repost</h1>
+      <p className="font-sans text-rd-text2 mb-8" style={{ fontSize: 13 }}>How would you like to add the video?</p>
+      <div className="grid gap-4" style={{ gridTemplateColumns: '1fr 1fr' }}>
+        {[
+          { id: 'url' as const, Icon: Link2, title: 'Paste a URL', desc: 'Paste a YouTube, TikTok, or Instagram link. TikTok videos are downloaded watermark-free.', accent: true },
+          { id: 'select' as const, Icon: FolderOpen, title: 'Select from account', desc: 'Browse your connected YouTube account and pick a video to redistribute.', accent: false },
+        ].map(({ id, Icon, title, desc, accent }) => (
+          <button key={id} onClick={() => { setMode(id); setStep(id === 'url' ? 1 : 0); }}
+            className="rounded-2xl text-left transition-all"
+            style={{
+              padding: '28px 24px',
+              background: accent ? 'linear-gradient(145deg, rgba(108,71,255,0.12), rgba(14,210,160,0.06))' : '#0F0F17',
+              border: `1px solid ${accent ? 'rgba(108,71,255,0.25)' : 'rgba(255,255,255,0.07)'}`,
+              cursor: 'pointer',
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = accent ? 'rgba(108,71,255,0.55)' : 'rgba(255,255,255,0.15)'; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = accent ? 'rgba(108,71,255,0.25)' : 'rgba(255,255,255,0.07)'; }}>
+            <div className="flex items-center justify-center rounded-xl mb-4" style={{ width: 40, height: 40, background: accent ? 'rgba(108,71,255,0.18)' : 'rgba(255,255,255,0.06)' }}>
+              <Icon size={18} color={accent ? '#8B6AFF' : 'rgba(240,239,248,0.50)'} />
             </div>
-            {i<steps.length-1 && <div style={{ width:24, height:1, background:"rgba(255,255,255,0.08)" }}/>}
-          </div>
+            <div className="font-display font-bold text-rd-text mb-2" style={{ fontSize: 17 }}>{title}</div>
+            <div className="font-sans text-rd-text2" style={{ fontSize: 13, lineHeight: 1.6 }}>{desc}</div>
+          </button>
         ))}
       </div>
+    </div>
+  );
 
-      {/* URL Mode — Paste URL */}
-      {mode === "url" && step === 1 && (
+  return (
+    <div className="p-10" style={{ maxWidth: 680 }}>
+      <h1 className="font-display font-extrabold text-rd-text m-0 mb-2" style={{ fontSize: 28, letterSpacing: '-0.04em' }}>New repost</h1>
+      <p className="font-sans text-rd-text2 mb-7" style={{ fontSize: 13 }}>
+        {mode === 'url' ? 'Paste a video URL to redistribute.' : 'Pick a video from your connected account.'}
+      </p>
+
+      <WizardSteps steps={steps} active={activeStep} />
+
+      {/* ── URL: paste ──────────────────────────────────────────────────────── */}
+      {mode === 'url' && step === 1 && (
         <div>
-          <div style={{ fontSize:15, color:"rgba(255,255,255,0.6)", marginBottom:20, fontWeight:300 }}>Paste a video URL from YouTube, TikTok, or Instagram.</div>
-          <input value={pastedUrl} onChange={e=>setPastedUrl(e.target.value)} placeholder="https://www.tiktok.com/@user/video/..."
-            style={{ width:"100%", padding:"14px 18px", background:"#111118", border:"1px solid rgba(255,255,255,0.1)", borderRadius:12, color:"white", fontSize:14, fontFamily:"'DM Sans',sans-serif", outline:"none", marginBottom:12, boxSizing:"border-box" }}/>
-          <input value={urlTitle} onChange={e=>setUrlTitle(e.target.value)} placeholder="Video title (optional)"
-            style={{ width:"100%", padding:"12px 18px", background:"#111118", border:"1px solid rgba(255,255,255,0.07)", borderRadius:12, color:"white", fontSize:13, fontFamily:"'DM Sans',sans-serif", outline:"none", marginBottom:16, boxSizing:"border-box" }}/>
+          <div className="flex flex-col gap-4 mb-6">
+            <label className="flex flex-col gap-1.5">
+              <span className="font-sans font-semibold uppercase text-rd-text2" style={{ fontSize: 11, letterSpacing: '0.08em' }}>Video URL</span>
+              <input value={pastedUrl} onChange={e => setPastedUrl(e.target.value)}
+                placeholder="https://www.tiktok.com/@user/video/…" className="rounded-xl font-mono"
+                style={{ background: '#0F0F17', border: '1px solid rgba(255,255,255,0.10)', padding: '12px 14px', color: '#F0EFF8', fontSize: 13, outline: 'none' }} />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="font-sans font-semibold uppercase text-rd-text2" style={{ fontSize: 11, letterSpacing: '0.08em' }}>Title (optional)</span>
+              <input value={urlTitle} onChange={e => setUrlTitle(e.target.value)} placeholder="Video title"
+                className="rounded-xl font-sans"
+                style={{ background: '#0F0F17', border: '1px solid rgba(255,255,255,0.08)', padding: '10px 14px', color: '#F0EFF8', fontSize: 14, outline: 'none' }} />
+            </label>
+          </div>
           {pastedUrl && detectPlatform(pastedUrl) && (
-            <div style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"6px 14px", background:"rgba(31,207,160,0.1)", border:"1px solid rgba(31,207,160,0.2)", borderRadius:100, fontSize:12, color:"#1FCFA0", marginBottom:16 }}>
-              {detectPlatform(pastedUrl)==="youtube"?"▶️":detectPlatform(pastedUrl)==="tiktok"?"🎵":"📸"} Detected: <strong style={{textTransform:"capitalize"}}>{detectPlatform(pastedUrl)}</strong>
-              {detectPlatform(pastedUrl)==="tiktok" && <span style={{color:"rgba(255,255,255,0.4)"}}>• Watermark-free</span>}
+            <div className="inline-flex items-center gap-2 rounded-full mb-6 font-mono"
+              style={{ padding: '5px 12px', background: 'rgba(14,210,160,0.10)', border: '1px solid rgba(14,210,160,0.20)', color: '#0ED2A0', fontSize: 12 }}>
+              <PlatformDot id={detectPlatform(pastedUrl) as PlatformId} size={18} radius={4} />
+              Detected: <strong className="capitalize">{detectPlatform(pastedUrl)}</strong>
+              {detectPlatform(pastedUrl) === 'tiktok' && <span className="text-rd-text2"> · Watermark-free</span>}
             </div>
           )}
-          <div style={{ display:"flex", gap:10 }}>
-            <button onClick={()=>{ setMode(null); setStep(0); }} style={{ padding:"10px 20px", background:"transparent", border:"1px solid rgba(255,255,255,0.1)", borderRadius:100, color:"rgba(255,255,255,0.4)", cursor:"pointer", fontSize:14, fontFamily:"'DM Sans',sans-serif" }}>← Back</button>
-            <button onClick={handleUrlSubmit} disabled={!pastedUrl.trim()} style={{ padding:"10px 24px", background: pastedUrl.trim()?"#7C5CFC":"rgba(255,255,255,0.06)", color:"white", border:"none", borderRadius:100, fontSize:14, cursor: pastedUrl.trim()?"pointer":"not-allowed", fontFamily:"'DM Sans',sans-serif", fontWeight:500 }}>Next →</button>
+          <div className="flex gap-3">
+            <button onClick={() => { setMode(null); setStep(0); }} className="rounded-full font-sans"
+              style={{ padding: '10px 20px', background: 'transparent', border: '1px solid rgba(255,255,255,0.10)', color: 'rgba(240,239,248,0.40)', cursor: 'pointer', fontSize: 13 }}>← Back</button>
+            <button onClick={handleUrlSubmit} disabled={!pastedUrl.trim()}
+              className="inline-flex items-center gap-2 rounded-full font-sans font-medium"
+              style={{ padding: '10px 24px', background: pastedUrl.trim() ? '#6C47FF' : 'rgba(255,255,255,0.06)', color: '#fff', border: 'none', cursor: pastedUrl.trim() ? 'pointer' : 'not-allowed', fontSize: 14 }}>
+              Next <ArrowRight size={14} />
+            </button>
           </div>
         </div>
       )}
 
-      {/* Select Mode — Source platform */}
-      {mode === "select" && step === 0 && (
+      {/* ── Select: source platform ──────────────────────────────────────────── */}
+      {mode === 'select' && step === 0 && (
         <div>
-          <div style={{ fontSize:15, color:"rgba(255,255,255,0.6)", marginBottom:20, fontWeight:300 }}>Which platform has the video you want to redistribute?</div>
-          <div style={{ display:"flex", gap:12 }}>
-            {platforms.map(p => (
-              <button key={p} onClick={()=>{ setSource(p); loadVideos(p); setStep(1); }} style={{ flex:1, padding:"20px 16px", background:"#111118", border:`1px solid ${source===p?"#7C5CFC":"rgba(255,255,255,0.07)"}`, borderRadius:14, color:"white", cursor:"pointer", fontFamily:"'DM Sans',sans-serif", fontSize:14, fontWeight:500, textTransform:"capitalize", transition:"all 0.15s" }}>
-                {p==="youtube"?"▶️":p==="tiktok"?"🎵":"📸"} {p}
+          <div className="font-sans text-rd-text2 mb-5" style={{ fontSize: 13 }}>Which platform has the video?</div>
+          <div className="flex gap-3 mb-6">
+            {PLATFORMS.map(p => (
+              <button key={p} onClick={() => { setSource(p); loadVideos(p); setStep(1); }}
+                className="flex-1 flex flex-col items-center gap-2.5 rounded-2xl font-sans font-medium transition-all"
+                style={{ padding: '20px 16px', background: '#0F0F17', border: `1px solid ${source === p ? '#6C47FF' : 'rgba(255,255,255,0.07)'}`, color: '#F0EFF8', cursor: 'pointer', fontSize: 14 }}>
+                <PlatformDot id={p} size={32} radius={8} />
+                {PLATFORM_LABELS[p]}
               </button>
             ))}
           </div>
-          <button onClick={()=>setMode(null)} style={{ marginTop:16, padding:"8px 18px", background:"transparent", border:"1px solid rgba(255,255,255,0.1)", borderRadius:100, color:"rgba(255,255,255,0.4)", cursor:"pointer", fontSize:13, fontFamily:"'DM Sans',sans-serif" }}>← Back</button>
+          <button onClick={() => setMode(null)} className="rounded-full font-sans"
+            style={{ padding: '8px 18px', background: 'transparent', border: '1px solid rgba(255,255,255,0.10)', color: 'rgba(240,239,248,0.40)', cursor: 'pointer', fontSize: 13 }}>← Back</button>
         </div>
       )}
 
-      {/* Select Mode — Pick video */}
-      {mode === "select" && step === 1 && (
+      {/* ── Select: pick video ───────────────────────────────────────────────── */}
+      {mode === 'select' && step === 1 && (
         <div>
-          <div style={{ fontSize:15, color:"rgba(255,255,255,0.6)", marginBottom:20, fontWeight:300 }}>Select a video from your {source} account.</div>
+          <div className="font-sans text-rd-text2 mb-5" style={{ fontSize: 13 }}>Select a video from your <strong className="text-rd-text capitalize">{source}</strong> account.</div>
           {loadingVideos ? (
-            <div style={{ textAlign:"center", padding:40, color:"rgba(255,255,255,0.3)" }}>Loading videos…</div>
+            <div className="text-center py-10 font-sans text-rd-text2">Loading…</div>
           ) : videos.length === 0 ? (
-            <div style={{ textAlign:"center", padding:40, color:"rgba(255,255,255,0.3)", fontSize:14 }}>
-              No videos found.{" "}
-              {source === "tiktok" ? (
-                <span>TikTok's API only shows videos uploaded through this app.{" "}
-                  <button onClick={()=>{ setMode("url"); setStep(1); }} style={{ background:"none", border:"none", color:"#9B7EFF", cursor:"pointer", textDecoration:"underline", fontFamily:"inherit", fontSize:14 }}>Paste a TikTok URL instead →</button>
-                </span>
-              ) : (
-                <span>Make sure your {source} account is connected.</span>
+            <div className="text-center py-10">
+              <div className="font-sans text-rd-text2 mb-2" style={{ fontSize: 14 }}>No videos found.</div>
+              {source === 'tiktok' && (
+                <button onClick={() => { setMode('url'); setStep(1); }} className="font-sans text-rd-purple" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13 }}>
+                  Paste a TikTok URL instead →
+                </button>
               )}
             </div>
           ) : (
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:12, maxHeight:400, overflowY:"auto" }}>
+            <div className="grid gap-3 mb-5" style={{ gridTemplateColumns: 'repeat(2,1fr)', maxHeight: 380, overflowY: 'auto' }}>
               {videos.map(v => (
-                <div key={v.id} onClick={()=>{ setSelectedVideo(v); setStep(2); }} style={{ background:"#111118", border:`1px solid ${selectedVideo?.id===v.id?"#7C5CFC":"rgba(255,255,255,0.07)"}`, borderRadius:12, overflow:"hidden", cursor:"pointer", transition:"all 0.15s" }}>
-                  {v.thumbnail && <img src={v.thumbnail} alt="" style={{ width:"100%", aspectRatio:"16/9", objectFit:"cover" }}/>}
-                  <div style={{ padding:"10px 12px" }}>
-                    <div style={{ fontSize:12, color:"rgba(255,255,255,0.8)", fontWeight:400, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as any }}>{v.title}</div>
-                    <div style={{ fontSize:10, color:"rgba(255,255,255,0.25)", marginTop:4 }}>{new Date(v.publishedAt).toLocaleDateString()}</div>
+                <div key={v.id} onClick={() => { setSelectedVideo(v); setStep(2); }}
+                  className="rounded-2xl overflow-hidden cursor-pointer transition-all"
+                  style={{ background: '#0F0F17', border: `1px solid ${selectedVideo?.id === v.id ? '#6C47FF' : 'rgba(255,255,255,0.07)'}` }}>
+                  {v.thumbnail && <img src={v.thumbnail} alt="" className="w-full object-cover" style={{ aspectRatio: '16/9' }} />}
+                  <div style={{ padding: '10px 12px' }}>
+                    <div className="font-sans text-rd-text" style={{ fontSize: 12, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any, overflow: 'hidden' }}>{v.title}</div>
+                    <div className="font-mono text-rd-text2 mt-1" style={{ fontSize: 10 }}>{new Date(v.publishedAt).toLocaleDateString()}</div>
                   </div>
                 </div>
               ))}
             </div>
           )}
-          <button onClick={()=>setStep(0)} style={{ marginTop:16, padding:"8px 18px", background:"transparent", border:"1px solid rgba(255,255,255,0.1)", borderRadius:100, color:"rgba(255,255,255,0.4)", cursor:"pointer", fontSize:13, fontFamily:"'DM Sans',sans-serif" }}>← Back</button>
+          <button onClick={() => setStep(0)} className="rounded-full font-sans"
+            style={{ padding: '8px 18px', background: 'transparent', border: '1px solid rgba(255,255,255,0.10)', color: 'rgba(240,239,248,0.40)', cursor: 'pointer', fontSize: 13 }}>← Back</button>
         </div>
       )}
 
-      {/* Destinations (both modes) */}
+      {/* ── Destinations ─────────────────────────────────────────────────────── */}
       {step === 2 && (
         <div>
-          <div style={{ fontSize:15, color:"rgba(255,255,255,0.6)", marginBottom:8, fontWeight:300 }}>Where should <strong style={{ color:"rgba(255,255,255,0.8)" }}>"{selectedVideo?.title?.slice(0,50)}"</strong> be posted?</div>
-          <div style={{ fontSize:12, color:"rgba(255,255,255,0.25)", marginBottom:20 }}>Select one or more destinations (cannot be same as source)</div>
-          <div style={{ display:"flex", gap:12, marginBottom:24 }}>
-            {platforms.filter(p=>p!==source).map(p => (
-              <button key={p} onClick={()=>toggleDest(p)} style={{ flex:1, padding:"20px 16px", background: destinations.includes(p)?"rgba(124,92,252,0.15)":"#111118", border:`1px solid ${destinations.includes(p)?"#7C5CFC":"rgba(255,255,255,0.07)"}`, borderRadius:14, color: destinations.includes(p)?"#9B7EFF":"rgba(255,255,255,0.6)", cursor:"pointer", fontFamily:"'DM Sans',sans-serif", fontSize:14, fontWeight:500, textTransform:"capitalize", transition:"all 0.15s" }}>
-                {p==="youtube"?"▶️":p==="tiktok"?"🎵":"📸"} {p}
-                {destinations.includes(p) && <span style={{ display:"block", fontSize:10, marginTop:4 }}>✓ selected</span>}
-              </button>
-            ))}
+          <div className="font-sans text-rd-text mb-1" style={{ fontSize: 14 }}>
+            Where should <strong>"{selectedVideo?.title?.slice(0, 50)}"</strong> be posted?
           </div>
-          <div style={{ display:"flex", gap:10 }}>
-            <button onClick={()=>setStep(mode==="url"?1:1)} style={{ padding:"10px 20px", background:"transparent", border:"1px solid rgba(255,255,255,0.1)", borderRadius:100, color:"rgba(255,255,255,0.4)", cursor:"pointer", fontSize:14, fontFamily:"'DM Sans',sans-serif" }}>← Back</button>
-            <button onClick={()=>setStep(3)} disabled={!destinations.length} style={{ padding:"10px 24px", background: destinations.length?"#7C5CFC":"rgba(255,255,255,0.06)", color:"white", border:"none", borderRadius:100, fontSize:14, cursor:destinations.length?"pointer":"not-allowed", fontFamily:"'DM Sans',sans-serif", fontWeight:500 }}>Next →</button>
+          <div className="font-sans text-rd-text2 mb-6" style={{ fontSize: 12 }}>Select one or more destinations — cannot repeat the source.</div>
+          <div className="flex gap-3 mb-7">
+            {PLATFORMS.filter(p => p !== source).map(p => {
+              const active = destinations.includes(p);
+              return (
+                <button key={p} onClick={() => toggleDest(p)}
+                  className="flex-1 flex flex-col items-center gap-2.5 rounded-2xl font-sans font-medium transition-all"
+                  style={{ padding: '20px 16px', background: active ? 'rgba(108,71,255,0.12)' : '#0F0F17', border: `1px solid ${active ? '#6C47FF' : 'rgba(255,255,255,0.07)'}`, color: active ? '#8B6AFF' : 'rgba(240,239,248,0.60)', cursor: 'pointer', fontSize: 14 }}>
+                  <PlatformDot id={p} size={32} radius={8} />
+                  {PLATFORM_LABELS[p]}
+                  {active && <span className="font-mono" style={{ fontSize: 9 }}>✓ selected</span>}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex gap-3">
+            <button onClick={() => setStep(mode === 'url' ? 1 : 1)} className="rounded-full font-sans"
+              style={{ padding: '10px 20px', background: 'transparent', border: '1px solid rgba(255,255,255,0.10)', color: 'rgba(240,239,248,0.40)', cursor: 'pointer', fontSize: 13 }}>← Back</button>
+            <button onClick={() => setStep(3)} disabled={!destinations.length}
+              className="inline-flex items-center gap-2 rounded-full font-sans font-medium"
+              style={{ padding: '10px 24px', background: destinations.length ? '#6C47FF' : 'rgba(255,255,255,0.06)', color: '#fff', border: 'none', cursor: destinations.length ? 'pointer' : 'not-allowed', fontSize: 14 }}>
+              Next <ArrowRight size={14} />
+            </button>
           </div>
         </div>
       )}
 
-      {/* Schedule (both modes) */}
+      {/* ── Schedule ─────────────────────────────────────────────────────────── */}
       {step === 3 && (
         <div>
-          <div style={{ fontSize:15, color:"rgba(255,255,255,0.6)", marginBottom:20, fontWeight:300 }}>When should this repost go out?</div>
-          <div style={{ marginBottom:24 }}>
-            <SchedulePicker
-              value={schedule || undefined}
-              onChange={(iso) => setSchedule(iso || "")}
-              label="Schedule for later"
-            />
+          <div className="font-sans text-rd-text2 mb-6" style={{ fontSize: 13 }}>When should this repost go out?</div>
+          <div className="mb-7">
+            <SchedulePicker value={schedule || undefined} onChange={iso => setSchedule(iso || '')} label="Schedule for later" />
           </div>
-          <div style={{ display:"flex", gap:10 }}>
-            <button onClick={()=>setStep(2)} style={{ padding:"10px 20px", background:"transparent", border:"1px solid rgba(255,255,255,0.1)", borderRadius:100, color:"rgba(255,255,255,0.4)", cursor:"pointer", fontSize:14, fontFamily:"'DM Sans',sans-serif" }}>← Back</button>
-            <button onClick={submit} disabled={submitting} style={{ padding:"10px 28px", background:"#7C5CFC", color:"white", border:"none", borderRadius:100, fontSize:14, cursor:submitting?"not-allowed":"pointer", fontFamily:"'DM Sans',sans-serif", fontWeight:500, opacity:submitting?0.7:1 }}>
-              {submitting ? "Queuing…" : schedule ? "Schedule repost →" : "Post now →"}
+          <div className="flex gap-3">
+            <button onClick={() => setStep(2)} className="rounded-full font-sans"
+              style={{ padding: '10px 20px', background: 'transparent', border: '1px solid rgba(255,255,255,0.10)', color: 'rgba(240,239,248,0.40)', cursor: 'pointer', fontSize: 13 }}>← Back</button>
+            <button onClick={submit} disabled={submitting}
+              className="inline-flex items-center gap-2 rounded-full font-sans font-medium"
+              style={{ padding: '10px 28px', background: '#6C47FF', color: '#fff', border: 'none', cursor: submitting ? 'not-allowed' : 'pointer', fontSize: 14, opacity: submitting ? 0.6 : 1, boxShadow: '0 0 20px rgba(108,71,255,0.30)' }}>
+              {submitting ? <><Loader2 size={14} className="animate-spin" /> Queuing…</> : schedule ? 'Schedule repost →' : 'Post now →'}
             </button>
           </div>
         </div>

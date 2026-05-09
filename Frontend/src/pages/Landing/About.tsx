@@ -1,83 +1,81 @@
-import React, { useEffect } from "react";
-import Footer from "../../components/Footer";
+import React from 'react';
+import Footer from '../../components/Footer';
+
+const STATS = [['12.4K', 'Creators'], ['340K', 'Videos distributed'], ['2.1M', 'Reposts'], ['99.7%', 'Uptime']];
+const TEAM = [
+  { initials: 'MS', name: 'Mira Solé',    role: 'Co-founder · Design',         c1: '#FF4D8B', c2: '#6C47FF' },
+  { initials: 'JK', name: 'Jonas Kim',    role: 'Co-founder · Engineering',    c1: '#4F8EF0', c2: '#0ED2A0' },
+  { initials: 'AR', name: 'Ada Reuven',   role: 'Head of Creator Relations',   c1: '#F5A623', c2: '#FF4D8B' },
+];
 
 export default function About() {
-  useEffect(() => {
-    const els = document.querySelectorAll(".reveal");
-    const io = new IntersectionObserver(e => e.forEach(el => { if(el.isIntersecting) el.target.classList.add("visible"); }), { threshold:0.1 });
-    els.forEach(el => io.observe(el));
-    return () => io.disconnect();
-  },[]);
-
   return (
-    <div>
-      <style>{`.reveal{opacity:0;transform:translateY(24px);transition:opacity 0.65s,transform 0.65s}.reveal.visible{opacity:1;transform:none}`}</style>
+    <div className="flex flex-col min-h-screen" style={{ background: '#F5F4F0', color: '#0C0B09' }}>
+      <div className="flex-1 px-14 py-16">
+        {/* Hero headline */}
+        <div className="text-center mb-14">
+          <h1 className="font-display font-extrabold m-0" style={{ fontSize: 60, letterSpacing: '-0.04em', color: '#0C0B09', lineHeight: 0.95 }}>
+            Built by creators,<br />
+            <span style={{ fontStyle: 'italic', fontWeight: 500 }}>for creators.</span>
+          </h1>
+        </div>
 
-      {/* HERO */}
-      <div style={{ background:"#0A0A0F", padding:"140px 48px 80px", textAlign:"center" }}>
-        <div style={{ fontSize:10, fontWeight:700, color:"rgba(155,126,255,0.8)", textTransform:"uppercase", letterSpacing:3, marginBottom:14, fontFamily:"'Syne',sans-serif" }}>About us</div>
-        <h1 style={{ fontFamily:"'Syne',sans-serif", fontSize:"clamp(40px,6vw,72px)", fontWeight:800, letterSpacing:-3, color:"white", marginBottom:20, lineHeight:1 }}>Built by creators,<br />for creators.</h1>
-        <p style={{ fontSize:17, color:"rgba(255,255,255,0.45)", maxWidth:500, margin:"0 auto", fontWeight:300, lineHeight:1.7 }}>We were tired of logging into three different platforms to post the same video. So we built the tool we wanted.</p>
-      </div>
-
-      {/* MISSION */}
-      <div className="reveal" style={{ maxWidth:1100, margin:"0 auto", padding:"96px 48px" }}>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:52, alignItems:"center" }}>
+        {/* Mission + stats */}
+        <div className="grid gap-16 max-w-5xl mx-auto mb-16" style={{ gridTemplateColumns: '1fr 1fr' }}>
           <div>
-            <div style={{ fontSize:10, fontWeight:700, color:"#7C5CFC", textTransform:"uppercase", letterSpacing:3, marginBottom:14, fontFamily:"'Syne',sans-serif" }}>Our mission</div>
-            <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:"clamp(28px,4vw,42px)", fontWeight:800, letterSpacing:-2, marginBottom:16, lineHeight:1.1 }}>Remove the busywork<br />from <span style={{ fontStyle:"italic", fontWeight:300, fontFamily:"'DM Sans',sans-serif", color:"#6B6960" }}>content creation.</span></h2>
-            <p style={{ fontSize:15, color:"#6B6960", lineHeight:1.75, fontWeight:300 }}>Creating content is hard enough. The distribution shouldn't be. Redistribute is a platform-agnostic distribution layer — you focus on making great videos, we make sure they reach every audience you've built.</p>
+            <div className="font-sans font-bold uppercase mb-4" style={{ fontSize: 11, letterSpacing: '0.12em', color: '#6C47FF' }}>
+              Our mission
+            </div>
+            <p className="font-display font-semibold m-0 mb-6" style={{ fontSize: 26, letterSpacing: '-0.02em', color: '#0C0B09', lineHeight: 1.3 }}>
+              Cut the busywork between platforms so creators can ship more of what they care about.
+            </p>
+            <p className="font-sans m-0" style={{ fontSize: 14, color: '#706D64', lineHeight: 1.65 }}>
+              We've watched too many friends burn out on the cross-posting treadmill. Redistribute is the tool we wished we had — opinionated, fast, and quiet.
+            </p>
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
-            {[["48+","Reposts made"],["3","Platforms supported"],["100%","Automated uploads"],["Week 2","Project stage"]].map(([v,l]) => (
-              <div key={l} style={{ background:"white", border:"1px solid rgba(0,0,0,0.08)", borderRadius:14, padding:"22px 20px" }}>
-                <div style={{ fontFamily:"'Syne',sans-serif", fontSize:32, fontWeight:800, letterSpacing:-1.5, marginBottom:4 }}>{v}</div>
-                <div style={{ fontSize:12, color:"#6B6960", fontWeight:300 }}>{l}</div>
+
+          {/* Stats grid */}
+          <div className="grid gap-px" style={{ gridTemplateColumns: '1fr 1fr', background: 'rgba(0,0,0,0.08)' }}>
+            {STATS.map(([n, l]) => (
+              <div key={l} className="p-7" style={{ background: '#F5F4F0' }}>
+                <div className="font-display font-extrabold mb-1.5" style={{ fontSize: 36, letterSpacing: '-0.04em', color: '#0C0B09' }}>{n}</div>
+                <div className="font-sans font-semibold uppercase" style={{ fontSize: 11, letterSpacing: '0.08em', color: '#706D64' }}>{l}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Team */}
+        <div className="max-w-5xl mx-auto">
+          <div className="font-sans font-bold uppercase mb-5" style={{ fontSize: 11, letterSpacing: '0.12em', color: '#6C47FF' }}>
+            The team
+          </div>
+          <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+            {TEAM.map(t => (
+              <div
+                key={t.initials}
+                className="rounded-2xl flex items-center gap-3.5"
+                style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.06)', padding: 20 }}
+              >
+                <div
+                  className="flex-shrink-0 flex items-center justify-center rounded-lg font-display font-extrabold text-white"
+                  style={{
+                    width: 48, height: 48,
+                    background: `linear-gradient(135deg, ${t.c1}, ${t.c2})`,
+                    fontSize: 19, letterSpacing: '-0.02em',
+                  }}
+                >
+                  {t.initials}
+                </div>
+                <div>
+                  <div className="font-sans font-semibold" style={{ fontSize: 14, color: '#0C0B09' }}>{t.name}</div>
+                  <div className="font-sans mt-0.5" style={{ fontSize: 12, color: '#706D64' }}>{t.role}</div>
+                </div>
               </div>
             ))}
           </div>
         </div>
       </div>
-
-      {/* TEAM */}
-      <div style={{ height:1, background:"rgba(0,0,0,0.07)", maxWidth:1100, margin:"0 auto" }} />
-      <div className="reveal" style={{ maxWidth:1100, margin:"0 auto", padding:"96px 48px" }}>
-        <div style={{ fontSize:10, fontWeight:700, color:"#7C5CFC", textTransform:"uppercase", letterSpacing:3, marginBottom:14, fontFamily:"'Syne',sans-serif" }}>The team</div>
-        <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:"clamp(28px,4vw,42px)", fontWeight:800, letterSpacing:-2, marginBottom:40 }}>Meet the <span style={{ fontStyle:"italic", fontWeight:300, fontFamily:"'DM Sans',sans-serif", color:"#6B6960" }}>builders.</span></h2>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:18 }}>
-          {[{ name:"Baraa Ammori", role:"Lead Developer & Founder", emoji:"👨‍💻" },{ name:"Team Member", role:"Frontend Developer", emoji:"👩‍🎨" },{ name:"Team Member", role:"Backend Engineer", emoji:"🧑‍💻" }].map(m => (
-            <div key={m.name} style={{ background:"white", border:"1px solid rgba(0,0,0,0.08)", borderRadius:16, padding:"28px", textAlign:"center", transition:"all 0.2s", cursor:"default" }}
-              onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-4px)";e.currentTarget.style.boxShadow="0 12px 32px rgba(0,0,0,0.08)"}}
-              onMouseLeave={e=>{e.currentTarget.style.transform="none";e.currentTarget.style.boxShadow="none"}}>
-              <div style={{ fontSize:40, marginBottom:12 }}>{m.emoji}</div>
-              <div style={{ fontFamily:"'Syne',sans-serif", fontSize:16, fontWeight:700, marginBottom:4 }}>{m.name}</div>
-              <div style={{ fontSize:12, color:"#6B6960", fontWeight:300 }}>{m.role}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* VALUES */}
-      <div style={{ height:1, background:"rgba(0,0,0,0.07)", maxWidth:1100, margin:"0 auto" }} />
-      <div className="reveal" style={{ maxWidth:1100, margin:"0 auto", padding:"96px 48px" }}>
-        <div style={{ fontSize:10, fontWeight:700, color:"#7C5CFC", textTransform:"uppercase", letterSpacing:3, marginBottom:14, fontFamily:"'Syne',sans-serif" }}>Our values</div>
-        <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:"clamp(28px,4vw,42px)", fontWeight:800, letterSpacing:-2, marginBottom:36 }}>What we <span style={{ fontStyle:"italic", fontWeight:300, fontFamily:"'DM Sans',sans-serif", color:"#6B6960" }}>believe in.</span></h2>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:16 }}>
-          {[
-            { icon:"⚡", t:"Simplicity first",      d:"Every feature must be explainable in one sentence. If it's complicated, it's wrong." },
-            { icon:"🔐", t:"Privacy by default",    d:"Your OAuth tokens are encrypted at rest. We never read your content or sell your data." },
-            { icon:"🌐", t:"Platform agnostic",     d:"No platform lock-in. We work with every major platform and plan to keep adding more." },
-            { icon:"🚀", t:"Speed matters",          d:"We queue and process uploads fast. You shouldn't have to wait around for a simple repost." },
-          ].map(v => (
-            <div key={v.t} style={{ background:"#F7F6F2", border:"1px solid rgba(0,0,0,0.07)", borderRadius:14, padding:"24px" }}>
-              <div style={{ fontSize:24, marginBottom:12 }}>{v.icon}</div>
-              <div style={{ fontFamily:"'Syne',sans-serif", fontSize:16, fontWeight:700, marginBottom:8 }}>{v.t}</div>
-              <div style={{ fontSize:14, color:"#6B6960", lineHeight:1.65, fontWeight:300 }}>{v.d}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
       <Footer />
     </div>
   );

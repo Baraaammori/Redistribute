@@ -1,181 +1,300 @@
-import React, { useEffect } from "react";
-import { Link } from "react-router-dom";
-import Footer from "../../components/Footer";
+import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { ArrowRight } from 'lucide-react';
+import { PlatformDot } from '../../components/ui/PlatformDot';
+import Footer from '../../components/Footer';
 
-// Shared hero image — inline SVG-based diagram (no external file needed)
-function HeroDiagram() {
-  const dots: [number, number, string][] = [
-    [580, 80, "#7C5CFC"],
-    [620, 160, "#1FCFA0"],
-    [540, 400, "#F0C94A"],
-    [650, 320, "#7C5CFC"],
-    [600, 450, "#1FCFA0"],
-    [660, 220, "#F0C94A"],
-    [490, 440, "#7C5CFC"],
-    [640, 380, "#1FCFA0"],
-  ];
+const TERMINAL_LINES: [string, 'detect' | 'queue' | 'ok' | 'fail', string][] = [
+  ['14:32:01', 'detect', 'new video on youtube · "How I edit faster" · 4:21'],
+  ['14:32:03', 'queue',  'cut vertical clip 0:00–0:60 · for tiktok'],
+  ['14:32:05', 'queue',  'cut vertical clip 0:00–0:90 · for instagram'],
+  ['14:32:18', 'ok',     'uploaded → tiktok @studiomira'],
+  ['14:32:24', 'ok',     'uploaded → instagram @studiomira'],
+  ['14:33:12', 'detect', 'new video on tiktok · "studio sound check" · 0:42'],
+  ['14:33:14', 'queue',  'reformat 9:16 → 16:9 · for youtube'],
+  ['14:33:31', 'ok',     'uploaded → youtube @StudioMira'],
+  ['14:33:45', 'fail',   'rate limit · retry in 02:00'],
+  ['14:35:46', 'ok',     'uploaded → instagram @studiomira'],
+  ['14:36:08', 'detect', 'new video on instagram · "color tutorial pt 2" · 1:20'],
+  ['14:36:10', 'queue',  'reformat 9:16 → 16:9 · for youtube'],
+  ['14:36:11', 'queue',  'crop center · for tiktok'],
+];
+
+const TAG_COLORS = {
+  detect: { fg: '#4F8EF0', bg: 'rgba(79,142,240,0.14)', label: 'DETECT' },
+  queue:  { fg: '#F5A623', bg: 'rgba(245,166,35,0.14)', label: 'QUEUE' },
+  ok:     { fg: '#0ED2A0', bg: 'rgba(14,210,160,0.14)', label: 'OK' },
+  fail:   { fg: '#F04F4F', bg: 'rgba(240,79,79,0.14)',  label: 'FAIL' },
+};
+
+function TerminalHero() {
+  const [count, setCount] = useState(7);
+  useEffect(() => {
+    const t = setInterval(() => {
+      setCount(c => (c >= TERMINAL_LINES.length ? 5 : c + 1));
+    }, 1200);
+    return () => clearInterval(t);
+  }, []);
+  const visible = TERMINAL_LINES.slice(0, count);
 
   return (
-    <div style={{ width: "100%", height: "100%", background: "#06060B", position: "relative", overflow: "hidden" }}>
-      {/* Grid */}
-      <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0.06 }}>
-        <defs>
-          <pattern id="grid" width="52" height="52" patternUnits="userSpaceOnUse">
-            <path d="M 52 0 L 0 0 0 52" fill="none" stroke="white" strokeWidth="1"/>
-          </pattern>
-        </defs>
-        <rect width="100%" height="100%" fill="url(#grid)" />
-      </svg>
-      {/* Glow orbs */}
-      <div style={{ position: "absolute", top: -80, left: -80, width: 500, height: 500, borderRadius: "50%", background: "radial-gradient(circle, rgba(100,68,210,0.35) 0%, transparent 70%)" }} />
-      <div style={{ position: "absolute", bottom: -60, right: -60, width: 420, height: 420, borderRadius: "50%", background: "radial-gradient(circle, rgba(18,195,135,0.3) 0%, transparent 70%)" }} />
-      {/* Platform nodes */}
-      <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", overflow: "visible" }} viewBox="0 0 700 500" preserveAspectRatio="xMidYMid meet">
-        {/* Connection lines */}
-        {[
-          { x1:200, y1:130, x2:360, y2:250, color:"rgba(220,220,220,0.4)" },
-          { x1:160, y1:360, x2:360, y2:250, color:"rgba(255,68,68,0.5)" },
-          { x1:530, y1:250, x2:360, y2:250, color:"rgba(255,122,61,0.5)" },
-        ].map((l,i) => (
-          <line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke={l.color} strokeWidth="1.5" strokeDasharray="8 5"/>
-        ))}
-        {/* Hub */}
-        <circle cx="360" cy="250" r="52" fill="#0C0820" stroke="#7C5CFC" strokeWidth="2"/>
-        <circle cx="360" cy="250" r="65" fill="none" stroke="rgba(124,92,252,0.25)" strokeWidth="1"/>
-        <circle cx="360" cy="250" r="80" fill="none" stroke="rgba(124,92,252,0.12)" strokeWidth="1"/>
-        <text x="360" y="245" textAnchor="middle" fill="#9B7EFF" fontSize="11" fontWeight="700" fontFamily="sans-serif">REDIS-</text>
-        <text x="360" y="260" textAnchor="middle" fill="#9B7EFF" fontSize="11" fontWeight="700" fontFamily="sans-serif">TRIBUTE</text>
-        {/* TikTok node */}
-        <rect x="130" y="100" width="130" height="58" rx="12" fill="#12121A" stroke="rgba(200,200,200,0.5)" strokeWidth="1"/>
-        <rect x="143" y="113" width="24" height="15" rx="4" fill="rgba(200,200,200,0.15)" stroke="rgba(200,200,200,0.4)" strokeWidth="1"/>
-        <text x="152" y="124" textAnchor="middle" fill="rgba(200,200,200,0.8)" fontSize="8" fontFamily="monospace">TT</text>
-        <text x="182" y="129" fill="rgba(200,200,200,0.9)" fontSize="13" fontWeight="600" fontFamily="sans-serif">TikTok</text>
-        <text x="143" y="150" fill="rgba(200,200,200,0.35)" fontSize="8" fontFamily="monospace">connected ·</text>
-        {/* YouTube node */}
-        <rect x="88" y="326" width="130" height="58" rx="12" fill="#1E0808" stroke="rgba(255,68,68,0.5)" strokeWidth="1"/>
-        <rect x="101" y="339" width="24" height="15" rx="4" fill="rgba(255,68,68,0.15)" stroke="rgba(255,68,68,0.4)" strokeWidth="1"/>
-        <text x="110" y="350" textAnchor="middle" fill="rgba(255,68,68,0.9)" fontSize="8" fontFamily="monospace">YT</text>
-        <text x="140" y="355" fill="rgba(255,68,68,0.9)" fontSize="13" fontWeight="600" fontFamily="sans-serif">YouTube</text>
-        <text x="101" y="376" fill="rgba(255,68,68,0.35)" fontSize="8" fontFamily="monospace">connected ·</text>
-        {/* Instagram node */}
-        <rect x="458" y="218" width="136" height="58" rx="12" fill="#1C0C04" stroke="rgba(255,122,61,0.5)" strokeWidth="1"/>
-        <rect x="471" y="231" width="24" height="15" rx="4" fill="rgba(255,122,61,0.15)" stroke="rgba(255,122,61,0.4)" strokeWidth="1"/>
-        <text x="480" y="242" textAnchor="middle" fill="rgba(255,122,61,0.9)" fontSize="8" fontFamily="monospace">IG</text>
-        <text x="510" y="247" fill="rgba(255,122,61,0.9)" fontSize="12" fontWeight="600" fontFamily="sans-serif">Instagram</text>
-        <text x="471" y="268" fill="rgba(255,122,61,0.35)" fontSize="8" fontFamily="monospace">connected ·</text>
-        {/* Dots */}
-        {dots.map(([x, y, c], i) => (
-          <circle key={i} cx={x} cy={y} r="2.5" fill={c} opacity="0.55"/>
-        ))}
-      </svg>
-      {/* Headline text overlay on right */}
+    <div className="flex-1 relative overflow-hidden flex flex-col p-10" style={{ background: '#06060B' }}>
+      {/* Radial glows */}
+      <div className="absolute pointer-events-none" style={{ top: -120, left: -120, width: 380, height: 380, borderRadius: '50%', background: 'radial-gradient(circle, rgba(108,71,255,0.35), transparent 70%)', filter: 'blur(20px)' }} />
+      <div className="absolute pointer-events-none" style={{ bottom: -160, right: -120, width: 420, height: 420, borderRadius: '50%', background: 'radial-gradient(circle, rgba(14,210,160,0.22), transparent 70%)', filter: 'blur(20px)' }} />
+      <div className="absolute inset-0 opacity-35 bg-dot-grid pointer-events-none" />
+
+      <div className="relative flex flex-col gap-4 flex-1">
+        {/* Terminal chrome */}
+        <div className="flex items-center gap-2.5">
+          <div className="flex gap-1.5">
+            <div className="rounded-full" style={{ width: 10, height: 10, background: '#FF5F57' }} />
+            <div className="rounded-full" style={{ width: 10, height: 10, background: '#FEBC2E' }} />
+            <div className="rounded-full" style={{ width: 10, height: 10, background: '#28C840' }} />
+          </div>
+          <span className="font-mono ml-1" style={{ fontSize: 11, color: 'rgba(240,239,248,0.25)' }}>
+            redistribute · live activity
+          </span>
+          <div className="flex-1" />
+          <span
+            className="inline-flex items-center gap-1.5 font-mono font-semibold uppercase"
+            style={{ background: 'rgba(14,210,160,0.10)', color: '#0ED2A0', padding: '4px 10px', borderRadius: 999, fontSize: 10, letterSpacing: '0.06em' }}
+          >
+            <span className="rounded-full animate-pulse2" style={{ width: 5, height: 5, background: '#0ED2A0', flexShrink: 0 }} />
+            STREAMING
+          </span>
+        </div>
+
+        {/* Terminal body */}
+        <div
+          className="flex-1 flex flex-col gap-1 font-mono"
+          style={{
+            background: 'rgba(15,15,23,0.72)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 14,
+            backdropFilter: 'blur(8px)', padding: '20px 22px', overflow: 'hidden',
+            fontSize: 12.5, lineHeight: 1.85,
+          }}
+        >
+          {visible.map((line, i) => {
+            const tag = TAG_COLORS[line[1]];
+            return (
+              <div
+                key={`${i}-${count}`}
+                className="grid gap-2.5 items-center"
+                style={{
+                  gridTemplateColumns: '74px 70px 1fr',
+                  animation: i === visible.length - 1 ? 'fadeup 280ms ease-out' : 'none',
+                }}
+              >
+                <span style={{ color: 'rgba(240,239,248,0.25)', fontVariantNumeric: 'tabular-nums' }}>{line[0]}</span>
+                <span
+                  className="font-semibold text-center rounded"
+                  style={{ color: tag.fg, background: tag.bg, padding: '2px 7px', fontSize: 10, letterSpacing: '0.06em' }}
+                >
+                  {tag.label}
+                </span>
+                <span style={{ color: '#F0EFF8' }}>{line[2]}</span>
+              </div>
+            );
+          })}
+          <span style={{ color: 'rgba(240,239,248,0.50)' }}>
+            <span style={{ color: '#8B6AFF' }}>$</span> watching…{' '}
+            <span className="inline-block animate-blink" style={{ width: 8, height: 14, background: '#8B6AFF', verticalAlign: -2 }} />
+          </span>
+        </div>
+
+        {/* Flow chips */}
+        <div className="flex gap-2.5 flex-wrap">
+          {(['youtube','tiktok'] as const).map(from =>
+            (['tiktok','instagram','youtube'] as const).filter(t => t !== from).slice(0,1).map(to => (
+              <div
+                key={`${from}${to}`}
+                className="flex items-center gap-2 font-sans font-medium"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)', padding: '6px 12px 6px 6px', borderRadius: 999, fontSize: 11, color: 'rgba(240,239,248,0.50)' }}
+              >
+                <PlatformDot id={from} size={18} radius={4} />
+                <span>{from === 'youtube' ? 'YouTube' : 'TikTok'}</span>
+                <ArrowRight size={12} style={{ color: 'rgba(240,239,248,0.25)' }} />
+                <PlatformDot id={to} size={18} radius={4} />
+                <span>{to === 'tiktok' ? 'TikTok' : to === 'instagram' ? 'Instagram' : 'YouTube'}</span>
+              </div>
+            ))
+          )}
+          {[['instagram','youtube'] as const, ['tiktok','instagram'] as const].map(([from, to]) => (
+            <div
+              key={`${from}${to}`}
+              className="flex items-center gap-2 font-sans font-medium"
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)', padding: '6px 12px 6px 6px', borderRadius: 999, fontSize: 11, color: 'rgba(240,239,248,0.50)' }}
+            >
+              <PlatformDot id={from} size={18} radius={4} />
+              <span>{from === 'instagram' ? 'Instagram' : 'TikTok'}</span>
+              <ArrowRight size={12} style={{ color: 'rgba(240,239,248,0.25)' }} />
+              <PlatformDot id={to} size={18} radius={4} />
+              <span>{to === 'youtube' ? 'YouTube' : 'Instagram'}</span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
 
 export default function Landing() {
-  useEffect(() => {
-    const els = document.querySelectorAll(".reveal");
-    const io = new IntersectionObserver(entries => entries.forEach(e => { if (e.isIntersecting) e.target.classList.add("visible"); }), { threshold: 0.1 });
-    els.forEach(el => io.observe(el));
-    return () => io.disconnect();
-  }, []);
-
   return (
-    <div>
-      <style>{`
-        @keyframes fadeUp { from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)} }
-        .anim-1{opacity:0;animation:fadeUp 0.5s 0.1s ease forwards}
-        .anim-2{opacity:0;animation:fadeUp 0.5s 0.2s ease forwards}
-        .anim-3{opacity:0;animation:fadeUp 0.5s 0.3s ease forwards}
-        .anim-4{opacity:0;animation:fadeUp 0.5s 0.42s ease forwards}
-        .reveal{opacity:0;transform:translateY(24px);transition:opacity 0.65s ease,transform 0.65s ease}
-        .reveal.visible{opacity:1;transform:translateY(0)}
-        .step-card:hover{background:white!important}
-        .platform-pill:hover{border-color:rgba(0,0,0,0.22)!important}
-      `}</style>
-
-      {/* HERO */}
-      <div style={{ minHeight: "100vh", display: "flex", overflow: "hidden" }}>
-        {/* Left copy */}
-        <div style={{ flex: "0 0 420px", display: "flex", flexDirection: "column", justifyContent: "center", padding: "100px 48px 60px", background: "#F7F6F2" }}>
-          <div className="anim-1" style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 11, color: "#6B6960", fontWeight: 300, marginBottom: 22 }}>
-            <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#1A7A4A", animation: "blink 2s infinite" }} />
+    <div className="flex flex-col min-h-screen" style={{ background: '#F5F4F0', color: '#0C0B09' }}>
+      {/* Hero — split screen */}
+      <div className="flex flex-1" style={{ minHeight: 'calc(100vh - 62px)' }}>
+        {/* Left */}
+        <div
+          className="flex flex-col justify-center"
+          style={{ width: 460, flexShrink: 0, padding: '48px 48px', background: '#F5F4F0' }}
+        >
+          <div
+            className="inline-flex items-center gap-2 font-sans font-semibold uppercase mb-7"
+            style={{ fontSize: 11, color: '#706D64', letterSpacing: '0.08em' }}
+          >
+            <span className="rounded-full animate-pulse2" style={{ width: 6, height: 6, background: '#0ED2A0', flexShrink: 0 }} />
             Cross-platform video distribution
           </div>
-          <h1 className="anim-2" style={{ fontFamily: "'Syne',sans-serif", fontSize: "clamp(44px,5vw,66px)", fontWeight: 800, letterSpacing: -3, lineHeight: 0.95, marginBottom: 20 }}>
-            Post Once.<br />Everywhere.
+
+          <h1
+            className="font-display font-extrabold m-0"
+            style={{ fontSize: 68, letterSpacing: '-0.045em', lineHeight: 0.95, color: '#0C0B09' }}
+          >
+            <div className="animate-fadeup">Post Once.</div>
+            <div
+              className="animate-fadeup"
+              style={{ fontStyle: 'italic', fontWeight: 500, color: '#3D2A8C', animationDelay: '120ms' }}
+            >
+              Everywhere.
+            </div>
           </h1>
-          <p className="anim-3" style={{ fontSize: 16, color: "#6B6960", lineHeight: 1.7, fontWeight: 300, marginBottom: 36 }}>
-            Connect TikTok, YouTube, and Instagram. Pick a video. Choose where it goes. We handle the upload automatically.
+
+          <p className="font-sans mt-6 max-w-sm" style={{ fontSize: 15, lineHeight: 1.65, color: '#706D64', fontWeight: 400 }}>
+            Upload a video once. Redistribute auto-formats it for YouTube, TikTok and
+            Instagram — and reposts new uploads across platforms while you sleep.
           </p>
-          <div className="anim-4" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <Link to="/register" style={{ display: "inline-block", padding: "13px 28px", background: "#0E0D0B", color: "white", borderRadius: 12, fontSize: 15, fontWeight: 500, textDecoration: "none", width: "fit-content" }}>
-              Connect your accounts →
+
+          <div className="mt-9 flex items-center gap-4">
+            <Link
+              to="/register"
+              className="inline-flex items-center gap-2 font-sans font-medium rounded-xl"
+              style={{ background: '#0C0B09', color: '#fff', padding: '14px 22px', fontSize: 14, textDecoration: 'none' }}
+            >
+              Connect your accounts <ArrowRight size={14} />
             </Link>
-            <span style={{ fontSize: 12, color: "#A8A69E", fontWeight: 300 }}>Free to start · No credit card required</span>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 48, paddingTop: 24, borderTop: "1px solid rgba(0,0,0,0.07)" }}>
-            <span style={{ fontSize: 11, color: "#A8A69E" }}>Works with</span>
-            {["▶️","🎵","📸"].map(e => <span key={e} style={{ fontSize: 20, opacity: 0.55 }}>{e}</span>)}
+          <div className="font-sans mt-3.5" style={{ fontSize: 12, color: '#706D64' }}>
+            Free to start · No credit card
+          </div>
+
+          <div
+            className="mt-14 flex items-center gap-3.5 font-sans font-semibold uppercase"
+            style={{ fontSize: 11, color: '#706D64', letterSpacing: '0.08em' }}
+          >
+            Works with
+            <div className="flex gap-2">
+              <PlatformDot id="youtube" size={22} radius={5} />
+              <PlatformDot id="tiktok" size={22} radius={5} />
+              <PlatformDot id="instagram" size={22} radius={5} />
+            </div>
           </div>
         </div>
-        {/* Right diagram */}
-        <div style={{ flex: 1, minHeight: "100vh" }}><HeroDiagram /></div>
+
+        {/* Right — terminal */}
+        <TerminalHero />
       </div>
 
-      {/* HOW IT WORKS */}
-      <div style={{ height: 1, background: "rgba(0,0,0,0.07)", maxWidth: 1100, margin: "0 auto" }} />
-      <div className="reveal" style={{ maxWidth: 1100, margin: "0 auto", padding: "96px 48px" }}>
-        <div style={{ fontSize: 10, fontWeight: 700, color: "#7C5CFC", textTransform: "uppercase", letterSpacing: 3, marginBottom: 14, fontFamily: "'Syne',sans-serif" }}>How it works</div>
-        <h2 style={{ fontFamily: "'Syne',sans-serif", fontSize: "clamp(30px,4vw,48px)", fontWeight: 800, letterSpacing: -2, marginBottom: 48, lineHeight: 1.08 }}>Three steps.<br /><span style={{ fontStyle: "italic", fontWeight: 300, fontFamily: "'DM Sans',sans-serif", letterSpacing: -1.5, color: "#6B6960" }}>That's it.</span></h2>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 1, background: "rgba(0,0,0,0.07)", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 20, overflow: "hidden" }}>
-          {[
-            { n: "01", t: "Connect", d: "OAuth-link your YouTube, TikTok, and Instagram accounts in under 60 seconds. One-time setup." },
-            { n: "02", t: "Choose", d: "Pick any video from any connected account. Select one or multiple destinations with one click." },
-            { n: "03", t: "Distribute", d: "We post it immediately or on a schedule. You pick the time — we handle the upload and formatting." },
-          ].map(s => (
-            <div key={s.n} className="step-card" style={{ background: "#F7F6F2", padding: "36px 28px", transition: "background 0.2s" }}>
-              <div style={{ fontSize: 10, color: "#A8A69E", letterSpacing: 1.5, marginBottom: 18 }}>{s.n}</div>
-              <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 20, fontWeight: 700, letterSpacing: -0.5, marginBottom: 10 }}>{s.t}</div>
-              <div style={{ fontSize: 14, color: "#6B6960", lineHeight: 1.65, fontWeight: 300 }}>{s.d}</div>
+      {/* How it works */}
+      <section className="py-24 px-14" style={{ background: '#F5F4F0', borderTop: '1px solid rgba(0,0,0,0.06)' }}>
+        <div className="max-w-5xl mx-auto">
+          <div className="text-center mb-16">
+            <div className="font-sans font-bold uppercase mb-4" style={{ fontSize: 11, letterSpacing: '0.12em', color: '#6C47FF' }}>
+              How it works
             </div>
-          ))}
-        </div>
-      </div>
+            <h2 className="font-display font-extrabold m-0" style={{ fontSize: 52, letterSpacing: '-0.04em', color: '#0C0B09', lineHeight: 1 }}>
+              Three steps to{' '}
+              <span style={{ fontStyle: 'italic', fontWeight: 500 }}>everywhere.</span>
+            </h2>
+          </div>
 
-      {/* PLATFORM PAIRS */}
-      <div style={{ height: 1, background: "rgba(0,0,0,0.07)", maxWidth: 1100, margin: "0 auto" }} />
-      <div className="reveal" style={{ maxWidth: 1100, margin: "0 auto", padding: "96px 48px", textAlign: "center" }}>
-        <div style={{ fontSize: 10, fontWeight: 700, color: "#7C5CFC", textTransform: "uppercase", letterSpacing: 3, marginBottom: 14, fontFamily: "'Syne',sans-serif" }}>Platforms</div>
-        <h2 style={{ fontFamily: "'Syne',sans-serif", fontSize: "clamp(30px,4vw,48px)", fontWeight: 800, letterSpacing: -2, marginBottom: 12 }}>Any direction.<br /><span style={{ fontStyle: "italic", fontWeight: 300, fontFamily: "'DM Sans',sans-serif", color: "#6B6960" }}>Many to many.</span></h2>
-        <p style={{ fontSize: 16, color: "#6B6960", lineHeight: 1.65, fontWeight: 300, maxWidth: 460, margin: "0 auto 44px" }}>Post from TikTok to YouTube, YouTube to Instagram, or one video to all three at once.</p>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center" }}>
-          {[["TikTok → YouTube","🎵","▶️"],["YouTube → TikTok","▶️","🎵"],["Instagram → YouTube","📸","▶️"],["YouTube → Instagram","▶️","📸"],["TikTok → Instagram","🎵","📸"],["One → All","✨","🌐"]].map(([label,a,b]) => (
-            <div key={label} className="platform-pill" style={{ background: "white", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 100, padding: "11px 20px", fontSize: 13, color: "#6B6960", transition: "border-color 0.15s", display: "flex", alignItems: "center", gap: 8 }}>
-              {a} <span style={{ color: "#A8A69E" }}>→</span> {b} <strong style={{ color: "#0E0D0B", fontWeight: 500 }}>{label}</strong>
-            </div>
-          ))}
+          <div className="grid gap-6" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+            {[
+              { n: '01', title: 'Connect', desc: 'Link your YouTube, TikTok, and Instagram accounts in under a minute.' },
+              { n: '02', title: 'Upload once', desc: 'Drop your video. Smart AI decides the best formats for each platform.' },
+              { n: '03', title: 'Relax', desc: 'Auto-Republish monitors your channels and cross-posts new content automatically.' },
+            ].map(step => (
+              <div key={step.n} className="rounded-2xl p-7" style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.06)' }}>
+                <div className="font-mono font-semibold mb-4" style={{ fontSize: 11, color: '#6C47FF', letterSpacing: '0.08em' }}>
+                  {step.n}
+                </div>
+                <div className="font-display font-bold mb-3" style={{ fontSize: 22, letterSpacing: '-0.02em', color: '#0C0B09' }}>
+                  {step.title}
+                </div>
+                <p className="font-sans m-0" style={{ fontSize: 14, color: '#706D64', lineHeight: 1.65 }}>
+                  {step.desc}
+                </p>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      </section>
 
-      {/* PRICING PREVIEW */}
-      <div style={{ height: 1, background: "rgba(0,0,0,0.07)", maxWidth: 1100, margin: "0 auto" }} />
-      <div className="reveal" style={{ maxWidth: 1100, margin: "0 auto", padding: "96px 48px", textAlign: "center" }}>
-        <div style={{ fontSize: 10, fontWeight: 700, color: "#7C5CFC", textTransform: "uppercase", letterSpacing: 3, marginBottom: 14, fontFamily: "'Syne',sans-serif" }}>Pricing</div>
-        <h2 style={{ fontFamily: "'Syne',sans-serif", fontSize: "clamp(30px,4vw,48px)", fontWeight: 800, letterSpacing: -2, marginBottom: 12 }}>Simple,<br /><span style={{ fontStyle: "italic", fontWeight: 300, fontFamily: "'DM Sans',sans-serif", color: "#6B6960" }}>honest pricing.</span></h2>
-        <p style={{ fontSize: 16, color: "#6B6960", fontWeight: 300, marginBottom: 36 }}>Start free. Upgrade when you're ready.</p>
-        <div style={{ display: "flex", gap: 14, justifyContent: "center", flexWrap: "wrap", marginBottom: 28 }}>
-          {[{ tier:"Free", price:"$0", desc:"3 reposts/month", dark:false },{ tier:"Pro", price:"$12", desc:"Unlimited · All platforms", dark:true }].map(p => (
-            <div key={p.tier} style={{ background: p.dark ? "#0E0D0B" : "white", color: p.dark ? "#F7F6F2" : "#0E0D0B", border: p.dark ? "none" : "1px solid rgba(0,0,0,0.08)", borderRadius: 16, padding: "28px 32px", minWidth: 200, textAlign: "left" }}>
-              <div style={{ fontSize: 10, opacity: 0.4, letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Syne',sans-serif", marginBottom: 8 }}>{p.tier}</div>
-              <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 40, fontWeight: 800, letterSpacing: -2 }}>{p.price}<span style={{ fontSize: 13, fontWeight: 300, opacity: 0.4 }}>/mo</span></div>
-              <div style={{ fontSize: 13, opacity: 0.5, marginTop: 8, fontWeight: 300 }}>{p.desc}</div>
-            </div>
-          ))}
+      {/* Platform pairs */}
+      <section className="py-16 px-14" style={{ background: '#0C0B09' }}>
+        <div className="max-w-5xl mx-auto text-center">
+          <div className="font-sans font-semibold uppercase mb-4" style={{ fontSize: 11, color: 'rgba(240,239,248,0.50)', letterSpacing: '0.08em' }}>
+            Every direction, automatically
+          </div>
+          <div className="flex flex-wrap justify-center gap-3 mt-8">
+            {[
+              ['youtube','tiktok'], ['youtube','instagram'],
+              ['tiktok','youtube'], ['tiktok','instagram'],
+              ['instagram','youtube'], ['instagram','tiktok'],
+            ].map(([a, b]) => (
+              <div
+                key={`${a}${b}`}
+                className="flex items-center gap-2.5 font-sans font-medium"
+                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', padding: '8px 16px 8px 8px', borderRadius: 999, fontSize: 12, color: 'rgba(240,239,248,0.70)' }}
+              >
+                <PlatformDot id={a as any} size={20} radius={4} />
+                <span>{a.charAt(0).toUpperCase() + a.slice(1)}</span>
+                <ArrowRight size={12} style={{ color: 'rgba(240,239,248,0.30)' }} />
+                <PlatformDot id={b as any} size={20} radius={4} />
+                <span>{b.charAt(0).toUpperCase() + b.slice(1)}</span>
+              </div>
+            ))}
+          </div>
         </div>
-        <Link to="/pricing" style={{ display: "inline-block", padding: "11px 24px", background: "#0E0D0B", color: "white", borderRadius: 100, fontSize: 14, fontWeight: 500, textDecoration: "none" }}>See full pricing →</Link>
-      </div>
+      </section>
+
+      {/* CTA */}
+      <section className="py-24 px-14" style={{ background: '#F5F4F0', borderTop: '1px solid rgba(0,0,0,0.06)' }}>
+        <div className="max-w-2xl mx-auto text-center">
+          <h2 className="font-display font-extrabold m-0" style={{ fontSize: 56, letterSpacing: '-0.04em', color: '#0C0B09', lineHeight: 1 }}>
+            Start for free.<br />
+            <span style={{ fontStyle: 'italic', fontWeight: 500 }}>No card needed.</span>
+          </h2>
+          <p className="font-sans mt-5 mx-auto" style={{ fontSize: 15, color: '#706D64', lineHeight: 1.65, maxWidth: 420 }}>
+            Free plan includes 3 uploads per month. Upgrade to Pro ($12/mo) for unlimited uploads and Auto-Republish.
+          </p>
+          <div className="flex items-center justify-center gap-4 mt-10">
+            <Link
+              to="/register"
+              className="inline-flex items-center gap-2 font-sans font-medium rounded-full"
+              style={{ background: '#0C0B09', color: '#fff', padding: '14px 28px', fontSize: 14, textDecoration: 'none' }}
+            >
+              Get started free <ArrowRight size={14} />
+            </Link>
+            <Link
+              to="/pricing"
+              className="font-sans font-medium"
+              style={{ color: '#706D64', fontSize: 14, textDecoration: 'none' }}
+            >
+              See pricing →
+            </Link>
+          </div>
+        </div>
+      </section>
 
       <Footer />
     </div>

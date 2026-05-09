@@ -1,74 +1,131 @@
-import React, { useState } from "react";
-import Footer from "../../components/Footer";
+import React, { useState } from 'react';
+import { Mail, ExternalLink, Globe, Send } from 'lucide-react';
+import Footer from '../../components/Footer';
+
+const CONTACT_INFO = [
+  { icon: Mail,   label: 'Email',   value: 'team@redistribute.io' },
+  { icon: ExternalLink, label: 'GitHub',   value: 'github.com/redistribute-io' },
+  { icon: Globe,  label: 'Live app', value: 'app.redistribute.io' },
+];
 
 export default function Contact() {
-  const [form, setForm] = useState({ name:"", email:"", subject:"", message:"" });
+  const [form, setForm] = useState({ name: '', email: '', subject: '', message: '' });
   const [sent, setSent] = useState(false);
-  const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement|HTMLTextAreaElement>) => setForm(p => ({ ...p, [k]: e.target.value }));
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setSent(true);
+  };
 
   return (
-    <div>
-      <div style={{ background:"#0A0A0F", padding:"140px 48px 80px", textAlign:"center" }}>
-        <div style={{ fontSize:10, fontWeight:700, color:"rgba(155,126,255,0.8)", textTransform:"uppercase", letterSpacing:3, marginBottom:14, fontFamily:"'Syne',sans-serif" }}>Contact</div>
-        <h1 style={{ fontFamily:"'Syne',sans-serif", fontSize:"clamp(40px,6vw,68px)", fontWeight:800, letterSpacing:-3, color:"white", marginBottom:16 }}>Get in touch.</h1>
-        <p style={{ fontSize:16, color:"rgba(255,255,255,0.45)", fontWeight:300 }}>We reply to every message, usually within 24 hours.</p>
-      </div>
-
-      <div style={{ maxWidth:1100, margin:"0 auto", padding:"80px 48px" }}>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:60, alignItems:"start" }}>
-          {/* Info */}
+    <div className="flex flex-col min-h-screen" style={{ background: '#F5F4F0', color: '#0C0B09' }}>
+      <div className="flex-1 px-14 py-14">
+        <div className="grid gap-14 max-w-5xl mx-auto" style={{ gridTemplateColumns: '1fr 1.2fr' }}>
+          {/* Left */}
           <div>
-            <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:32, fontWeight:800, letterSpacing:-1.5, marginBottom:16 }}>We'd love to<br />hear from you.</h2>
-            <p style={{ fontSize:15, color:"#6B6960", lineHeight:1.7, fontWeight:300, marginBottom:24 }}>Whether you have a bug report, a feature idea, or just want to say hi — we read everything and respond to every message.</p>
-            {[
-              { icon:"📧", label:"Email", val:"hello@redistribute.io" },
-              { icon:"🐙", label:"GitHub", val:"github.com/Mawhadmd/redistribute" },
-              { icon:"🌐", label:"Live app", val:"redistribute.vercel.app" },
-            ].map(d => (
-              <div key={d.label} style={{ display:"flex", alignItems:"center", gap:14, padding:"14px 0", borderBottom:"1px solid rgba(0,0,0,0.07)" }}>
-                <span style={{ fontSize:20, width:36 }}>{d.icon}</span>
-                <div>
-                  <div style={{ fontSize:11, color:"#A8A69E", marginBottom:2 }}>{d.label}</div>
-                  <div style={{ fontWeight:500, fontSize:14 }}>{d.val}</div>
+            <h1 className="font-display font-extrabold m-0" style={{ fontSize: 48, letterSpacing: '-0.04em', color: '#0C0B09', lineHeight: 1 }}>
+              Say hello.
+            </h1>
+            <p className="font-sans mt-4" style={{ fontSize: 14, color: '#706D64', lineHeight: 1.6 }}>
+              Bug, request, partnership, or just curious — we read everything.
+            </p>
+            <div className="flex flex-col gap-4 mt-9">
+              {CONTACT_INFO.map(({ icon: Icon, label, value }) => (
+                <div key={label} className="flex items-center gap-3.5">
+                  <div
+                    className="flex-shrink-0 flex items-center justify-center rounded-lg"
+                    style={{ width: 36, height: 36, background: '#fff', border: '1px solid rgba(0,0,0,0.06)', color: '#0C0B09' }}
+                  >
+                    <Icon size={16} />
+                  </div>
+                  <div>
+                    <div className="font-sans font-semibold uppercase" style={{ fontSize: 11, letterSpacing: '0.08em', color: '#706D64' }}>
+                      {label}
+                    </div>
+                    <div className="font-mono mt-0.5" style={{ fontSize: 13, color: '#0C0B09' }}>{value}</div>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
 
-          {/* Form */}
-          <div style={{ background:"white", border:"1px solid rgba(0,0,0,0.08)", borderRadius:20, padding:36 }}>
+          {/* Right — form */}
+          <div className="rounded-2xl" style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.06)', padding: 28 }}>
             {sent ? (
-              <div style={{ textAlign:"center", padding:32 }}>
-                <div style={{ fontSize:48, marginBottom:14 }}>✅</div>
-                <div style={{ fontFamily:"'Syne',sans-serif", fontSize:22, fontWeight:800, marginBottom:8 }}>Message sent!</div>
-                <div style={{ fontSize:14, color:"#6B6960", fontWeight:300 }}>We'll get back to you within 24 hours.</div>
+              <div className="flex flex-col items-center justify-center h-full gap-4 py-10 text-center">
+                <div
+                  className="flex items-center justify-center rounded-full"
+                  style={{ width: 48, height: 48, background: 'rgba(14,210,160,0.15)', color: '#0ED2A0' }}
+                >
+                  <Send size={20} />
+                </div>
+                <div className="font-display font-bold" style={{ fontSize: 22, letterSpacing: '-0.02em', color: '#0C0B09' }}>Message sent!</div>
+                <p className="font-sans m-0" style={{ fontSize: 14, color: '#706D64' }}>We'll get back to you soon.</p>
               </div>
             ) : (
-              <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
-                <div style={{ fontFamily:"'Syne',sans-serif", fontSize:20, fontWeight:800, letterSpacing:-0.5 }}>Send a message</div>
-                {[["name","Your name","text","Baraa Ammori"],["email","Email address","email","you@example.com"],["subject","Subject","text","Feature request, bug report..."]].map(([k,label,type,ph]) => (
-                  <div key={k} style={{ display:"flex", flexDirection:"column", gap:6 }}>
-                    <label style={{ fontSize:11, fontWeight:600, color:"#A8A69E", textTransform:"uppercase", letterSpacing:1 }}>{label}</label>
-                    <input type={type} placeholder={ph} value={(form as any)[k]} onChange={set(k)}
-                      style={{ background:"#F7F6F2", border:"1px solid rgba(0,0,0,0.08)", borderRadius:10, padding:"11px 14px", fontFamily:"'DM Sans',sans-serif", fontSize:14, outline:"none", fontWeight:300 }}
-                      onFocus={e=>e.target.style.borderColor="#7C5CFC"} onBlur={e=>e.target.style.borderColor="rgba(0,0,0,0.08)"}/>
-                  </div>
-                ))}
-                <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-                  <label style={{ fontSize:11, fontWeight:600, color:"#A8A69E", textTransform:"uppercase", letterSpacing:1 }}>Message</label>
-                  <textarea placeholder="Tell us what's on your mind..." value={form.message} onChange={set("message")} rows={5}
-                    style={{ background:"#F7F6F2", border:"1px solid rgba(0,0,0,0.08)", borderRadius:10, padding:"11px 14px", fontFamily:"'DM Sans',sans-serif", fontSize:14, outline:"none", resize:"vertical", fontWeight:300 }}
-                    onFocus={e=>e.target.style.borderColor="#7C5CFC"} onBlur={e=>e.target.style.borderColor="rgba(0,0,0,0.08)"}/>
+              <form onSubmit={handleSubmit} className="flex flex-col gap-3.5">
+                <div className="grid gap-3.5" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                  {(['name', 'email'] as const).map(field => (
+                    <label key={field} className="flex flex-col gap-1.5">
+                      <span className="font-sans font-semibold uppercase" style={{ fontSize: 11, letterSpacing: '0.08em', color: '#706D64' }}>
+                        {field.charAt(0).toUpperCase() + field.slice(1)}
+                      </span>
+                      <input
+                        type={field === 'email' ? 'email' : 'text'}
+                        value={form[field]}
+                        onChange={e => setForm(f => ({ ...f, [field]: e.target.value }))}
+                        required
+                        style={{
+                          background: '#F5F4F0', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 10,
+                          padding: '10px 14px', color: '#0C0B09', fontSize: 14, outline: 'none', width: '100%',
+                          fontFamily: 'Inter, sans-serif',
+                        }}
+                      />
+                    </label>
+                  ))}
                 </div>
-                <button onClick={() => setSent(true)} style={{ padding:"11px 24px", background:"#0E0D0B", color:"white", border:"none", borderRadius:100, fontSize:14, fontWeight:500, cursor:"pointer", alignSelf:"flex-start" }}>
-                  Send message →
+                <label className="flex flex-col gap-1.5">
+                  <span className="font-sans font-semibold uppercase" style={{ fontSize: 11, letterSpacing: '0.08em', color: '#706D64' }}>Subject</span>
+                  <input
+                    type="text"
+                    value={form.subject}
+                    onChange={e => setForm(f => ({ ...f, subject: e.target.value }))}
+                    style={{
+                      background: '#F5F4F0', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 10,
+                      padding: '10px 14px', color: '#0C0B09', fontSize: 14, outline: 'none', width: '100%',
+                      fontFamily: 'Inter, sans-serif',
+                    }}
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="font-sans font-semibold uppercase" style={{ fontSize: 11, letterSpacing: '0.08em', color: '#706D64' }}>Message</span>
+                  <textarea
+                    rows={6}
+                    value={form.message}
+                    onChange={e => setForm(f => ({ ...f, message: e.target.value }))}
+                    required
+                    style={{
+                      background: '#F5F4F0', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 10,
+                      padding: '10px 14px', color: '#0C0B09', fontSize: 14, outline: 'none', resize: 'none', width: '100%',
+                      fontFamily: 'Inter, sans-serif',
+                    }}
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="self-start inline-flex items-center gap-2 font-sans font-medium rounded-full"
+                  style={{
+                    background: '#6C47FF', color: '#fff', border: 'none', padding: '12px 24px', fontSize: 13, cursor: 'pointer',
+                    boxShadow: '0 0 32px rgba(108,71,255,0.35)',
+                  }}
+                >
+                  Send message <Send size={13} />
                 </button>
-              </div>
+              </form>
             )}
           </div>
         </div>
       </div>
-
       <Footer />
     </div>
   );
