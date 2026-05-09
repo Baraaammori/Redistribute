@@ -8,7 +8,7 @@ const { authenticateToken } = require("../middleware/auth");
 router.get("/", authenticateToken, async (req, res) => {
   const { data, error } = await supabase
     .from("platform_accounts")
-    .select("id, platform, handle, display_name, follower_count, connected_at, status, expires_at, connected, error_message")
+    .select("id, platform, handle, display_name, follower_count, connected_at, expires_at")
     .eq("user_id", req.user.userId);
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);

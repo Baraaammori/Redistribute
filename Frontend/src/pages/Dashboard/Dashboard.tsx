@@ -481,9 +481,8 @@ function AccountsPage() {
           <div className="flex flex-col gap-3.5 stagger">
             {(['youtube', 'tiktok', 'instagram'] as PlatformId[]).map((pid, i) => {
               const acc = accounts.find((a: any) => a.platform === pid);
-              const needsReconnect = acc?.connected === false;
-              const expired = needsReconnect || acc?.status === 'paused' || (acc?.expires_at && new Date(acc.expires_at) < new Date());
-              const connected = !!acc && !expired && !needsReconnect;
+              // Tokens are auto-refreshed by backend, so we consider it connected if the record exists
+              const connected = !!acc;
 
               return (
                 <div
@@ -491,23 +490,11 @@ function AccountsPage() {
                   className="relative rounded-2xl overflow-hidden animate-enter"
                   style={{
                     background: '#0F0F17',
-                    border: `1px solid ${needsReconnect ? 'rgba(240,79,79,0.30)' : connected ? 'rgba(14,210,160,0.16)' : expired ? 'rgba(245,166,35,0.22)' : 'rgba(255,255,255,0.07)'}`,
+                    border: `1px solid ${connected ? 'rgba(14,210,160,0.16)' : 'rgba(255,255,255,0.07)'}`,
                     animationDelay: `${i * 80}ms`,
                     transition: 'border-color 200ms ease',
                   }}
                 >
-                  {/* Reconnect required red banner */}
-                  {needsReconnect && (
-                    <div
-                      className="flex items-center justify-between px-5 py-2.5"
-                      style={{ background: 'rgba(240,79,79,0.10)', borderBottom: '1px solid rgba(240,79,79,0.20)' }}
-                    >
-                      <span className="font-sans font-medium" style={{ fontSize: 12, color: '#F04F4F' }}>
-                        ⚠ Reconnect required{acc?.error_message ? ` — ${acc.error_message}` : ''}
-                      </span>
-                      <Btn kind="primary" size="sm" icon={RefreshCw} onClick={() => connect(pid)}>Reconnect</Btn>
-                    </div>
-                  )}
 
                   {/* Ambient bg glow for connected */}
                   {connected && (
@@ -535,7 +522,7 @@ function AccountsPage() {
                         <span className="font-display font-bold" style={{ fontSize: 19, letterSpacing: '-0.02em', color: '#F0EFF8' }}>
                           {PLATFORM_LABELS[pid]}
                         </span>
-                        {acc && <StatusBadge status={expired ? 'paused' : 'active'} />}
+                        {acc && <StatusBadge status="active" />}
                         {acc?.handle && (
                           <span className="font-mono" style={{ fontSize: 12, color: 'rgba(240,239,248,0.40)' }}>
                             @{acc.handle}
@@ -543,11 +530,7 @@ function AccountsPage() {
                         )}
                       </div>
                       <div className="font-sans mt-1.5" style={{ fontSize: 13, color: 'rgba(240,239,248,0.45)', lineHeight: 1.5 }}>
-                        {acc
-                          ? (expired
-                            ? 'Token expired — reconnect to resume auto-publishing'
-                            : `Connected · auto-publish enabled · ${PLATFORM_DESCS[pid]}`)
-                          : PLATFORM_DESCS[pid]}
+                        {acc ? `Connected · auto-publish enabled · ${PLATFORM_DESCS[pid]}` : PLATFORM_DESCS[pid]}
                       </div>
                     </div>
 
@@ -555,8 +538,6 @@ function AccountsPage() {
                     <div className="flex items-center gap-2 flex-shrink-0">
                       {!acc ? (
                         <Btn kind="primary" size="sm" onClick={() => connect(pid)}>Connect</Btn>
-                      ) : expired ? (
-                        <Btn kind="primary" size="sm" icon={RefreshCw} onClick={() => connect(pid)}>Reconnect</Btn>
                       ) : (
                         <>
                           <Btn kind="ghost" size="sm" onClick={() => navigate('/dashboard/settings')}>Settings</Btn>
