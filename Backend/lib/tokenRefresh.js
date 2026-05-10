@@ -9,6 +9,8 @@ const supabase = require("./supabase");
 
 // Instagram tokens last 60 days — refresh proactively when within 7 days of expiry
 const INSTAGRAM_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+// TikTok access tokens last 24h; refresh 2h early so a retry window exists
+const TIKTOK_GRACE_MS    = 2 * 60 * 60 * 1000;
 const DEFAULT_GRACE_MS   = 5 * 60 * 1000;
 
 function isTokenExpired(account, gracePeriodMs = DEFAULT_GRACE_MS) {
@@ -81,7 +83,7 @@ async function refreshTikTokToken(account) {
 
     if (data.error) {
       const desc = data.error_description || data.error;
-      const reconnectCodes = ["invalid_grant", "refresh_token_not_found", "access_token_invalid", "10005"];
+      const reconnectCodes = ["invalid_grant", "invalid_client", "refresh_token_not_found", "access_token_invalid", "10005"];
       if (reconnectCodes.some(c => String(data.error).includes(c) || desc.includes(c))) {
         await markAccountError(account.id, "Refresh token expired — reconnect TikTok");
         throw new UnrecoverableError(
@@ -153,7 +155,9 @@ async function refreshInstagramToken(account) {
 async function refreshTokenIfExpired(account, gracePeriodMs) {
   const grace = gracePeriodMs !== undefined
     ? gracePeriodMs
-    : account.platform === "instagram" ? INSTAGRAM_GRACE_MS : DEFAULT_GRACE_MS;
+    : account.platform === "instagram" ? INSTAGRAM_GRACE_MS
+    : account.platform === "tiktok" ? TIKTOK_GRACE_MS
+    : DEFAULT_GRACE_MS;
 
   if (!isTokenExpired(account, grace)) return account;
 
