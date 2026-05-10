@@ -1,7 +1,14 @@
 const router = require("express").Router();
-const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const supabase = require("../lib/supabase");
 const { authenticateToken } = require("../middleware/auth");
+let _stripe = null;
+function getStripe() {
+  if (!_stripe) {
+    if (!process.env.STRIPE_SECRET_KEY) throw Object.assign(new Error("Stripe not configured"), { status: 503 });
+    _stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+  }
+  return _stripe;
+}
 
 async function withStripeRetry(fn) {
   try {
@@ -27,14 +34,14 @@ router.post("/checkout", authenticateToken, async (req, res) => {
     let customerId = user.stripe_customer_id;
     if (!customerId) {
       const customer = await withStripeRetry(() =>
-        stripe.customers.create({ email: user.email, metadata: { userId: user.id } })
+        getStripe().customers.create({ email: user.email, metadata: { userId: user.id } })
       );
       customerId = customer.id;
       await supabase.from("users").update({ stripe_customer_id: customerId }).eq("id", user.id);
     }
 
     const session = await withStripeRetry(() =>
-      stripe.checkout.sessions.create(
+      getStripe().checkout.sessions.create(
         {
           customer: customerId,
           customer_email: customerId ? undefined : user.email, // pre-fill if no customer yet
@@ -61,7 +68,7 @@ router.post("/webhook", async (req, res) => {
   const sig = req.headers["stripe-signature"];
   let event;
   try {
-    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+    event = getStripe().webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
   } catch (err) {
     console.error("[stripe-webhook] Signature error:", err.message);
     return res.status(400).send(`Webhook error: ${err.message}`);
@@ -83,7 +90,7 @@ router.post("/webhook", async (req, res) => {
     switch (event.type) {
       case "checkout.session.completed": {
         if (obj.mode === "subscription") {
-          const customer = await stripe.customers.retrieve(obj.customer);
+          const customer = await getStripe().customers.retrieve(obj.customer);
           const userId = customer.metadata?.userId;
           if (userId) {
             await supabase.from("users")

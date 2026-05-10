@@ -1,6 +1,13 @@
 const router = require("express").Router();
-const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const supabase = require("../lib/supabase");
+let _stripe = null;
+function getStripe() {
+  if (!_stripe) {
+    if (!process.env.STRIPE_SECRET_KEY) throw Object.assign(new Error("Stripe not configured"), { status: 503 });
+    _stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+  }
+  return _stripe;
+}
 const { authenticateToken } = require("../middleware/auth");
 
 // In-memory cache: { [userId]: { data, cachedAt } }
@@ -71,7 +78,7 @@ router.get("/status", authenticateToken, async (req, res) => {
     if (user.stripe_sub_id && process.env.STRIPE_SECRET_KEY) {
       try {
         const sub = await withStripeRetry(() =>
-          stripe.subscriptions.retrieve(user.stripe_sub_id)
+          getStripe().subscriptions.retrieve(user.stripe_sub_id)
         );
         stripeStatus = {
           status: sub.status, // active, past_due, canceled, trialing, etc.
@@ -114,7 +121,7 @@ router.get("/invoices", authenticateToken, async (req, res) => {
     if (!user?.stripe_customer_id) return res.json([]);
 
     const invoices = await withStripeRetry(() =>
-      stripe.invoices.list({ customer: user.stripe_customer_id, limit: 5 })
+      getStripe().invoices.list({ customer: user.stripe_customer_id, limit: 5 })
     );
 
     const result = invoices.data.map(inv => ({

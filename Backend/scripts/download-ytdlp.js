@@ -40,6 +40,6 @@ console.log(`Downloading yt-dlp to ${dest}...`);
 download(url, dest)
   .then(() => console.log('✅ yt-dlp downloaded successfully'))
   .catch(err => {
-    console.error('❌ Failed to download yt-dlp:', err.message);
-    process.exit(1);
+    console.warn('⚠️  yt-dlp download failed:', err.message);
+    console.warn('   YouTube download features will be unavailable.');
   });
