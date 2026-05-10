@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowRight, Check } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { PlatformDot } from '../../components/ui/PlatformDot';
+import { BASE } from '../../lib/api';
 
 const ACTIVITY_LINES = [
   { tag: 'ok',    color: '#0ED2A0', when: '14m ago',  text: '"How I edit faster" cross-posted' },
@@ -12,6 +13,27 @@ const ACTIVITY_LINES = [
   { tag: 'ok',    color: '#0ED2A0', when: '8h ago',   text: '"Why I left freelance" → reel' },
 ];
 
+/* Google G logo */
+function GoogleIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path d="M17.64 9.205c0-.639-.057-1.252-.164-1.841H9v3.481h4.844a4.14 4.14 0 01-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
+      <path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 009 18z" fill="#34A853"/>
+      <path d="M3.964 10.71A5.41 5.41 0 013.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 000 9c0 1.452.348 2.827.957 4.042l3.007-2.332z" fill="#FBBC05"/>
+      <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 00.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z" fill="#EA4335"/>
+    </svg>
+  );
+}
+
+/* Apple logo */
+function AppleIcon() {
+  return (
+    <svg width="16" height="18" viewBox="0 0 814 1000" fill="white">
+      <path d="M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76 0-103.7 40.8-165.9 40.8s-105-57.8-155.5-127.4C46 389.4 45 266.2 45 256.1c0-70.5 11.3-141.7 34.7-202.3C126 14.5 191 0 235.1 0c64.9 0 108.2 33.8 131.3 33.8 22.4 0 72.1-29.3 138.7-29.3 22.4 0 108.2 1.9 174.5 83.3zm-88-154.2c12.2-22.3 21.8-56.5 21.8-90.7 0-4.5-.3-9-.6-13.5-22.1.9-48.3 14.7-65.4 35.3-14.4 17.4-27.8 47.5-27.8 79.9 0 4.8.6 9.6 1 11.5 1.9.3 5.1.6 8.3.6 19.2 0 43.5-12.8 62.7-23.1z"/>
+    </svg>
+  );
+}
+
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -19,6 +41,16 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Show OAuth error from URL param (e.g. after failed Google/Apple callback)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const oauthErr = params.get("error");
+    if (oauthErr) {
+      setError(decodeURIComponent(oauthErr));
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,6 +64,14 @@ export default function Login() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleGoogle = () => {
+    window.location.href = `${BASE}/api/auth/google`;
+  };
+
+  const handleApple = () => {
+    window.location.href = `${BASE}/api/auth/apple`;
   };
 
   return (
@@ -126,6 +166,47 @@ export default function Login() {
             }}
           >
             {loading ? 'Signing in…' : <>Resume work <ArrowRight size={14} /></>}
+          </button>
+
+          {/* Social login divider */}
+          <div className="flex items-center gap-3 my-1">
+            <div className="flex-1" style={{ height: 1, background: 'rgba(0,0,0,0.08)' }} />
+            <span className="font-sans" style={{ fontSize: 11, color: '#A09D96' }}>or continue with</span>
+            <div className="flex-1" style={{ height: 1, background: 'rgba(0,0,0,0.08)' }} />
+          </div>
+
+          {/* Google */}
+          <button
+            type="button"
+            onClick={handleGoogle}
+            className="w-full inline-flex items-center justify-center gap-3 rounded-lg font-sans font-medium"
+            style={{
+              height: 44, background: '#fff', color: '#0C0B09',
+              border: '1px solid #272727', fontSize: 14, cursor: 'pointer',
+              transition: 'background 150ms ease',
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#F5F4F0'; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = '#fff'; }}
+          >
+            <GoogleIcon />
+            Continue with Google
+          </button>
+
+          {/* Apple */}
+          <button
+            type="button"
+            onClick={handleApple}
+            className="w-full inline-flex items-center justify-center gap-3 rounded-lg font-sans font-medium"
+            style={{
+              height: 44, background: '#000', color: '#fff',
+              border: '1px solid #272727', fontSize: 14, cursor: 'pointer',
+              transition: 'background 150ms ease',
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#1a1a1a'; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = '#000'; }}
+          >
+            <AppleIcon />
+            Continue with Apple
           </button>
 
           <div className="flex justify-between font-sans" style={{ fontSize: 12, color: '#706D64' }}>

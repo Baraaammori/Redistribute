@@ -423,7 +423,36 @@ router.post("/", authenticateToken, async (req, res) => {
 });
 
 router.get("/", authenticateToken, async (req, res) => {
-  const { data, error } = await supabase.from("reposts")
+  // Paginated response when ?page is provided; flat array otherwise (backward compat)
+  if (req.query.page !== undefined) {
+    const page   = Math.max(1, parseInt(req.query.page)  || 1);
+    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+    const status = req.query.status;
+    const from   = (page - 1) * limit;
+    const to     = from + limit - 1;
+
+    let query = supabase
+      .from("reposts")
+      .select("*", { count: "exact" })
+      .eq("user_id", req.user.userId)
+      .order("created_at", { ascending: false });
+
+    if (status && status !== "all") query = query.eq("status", status);
+
+    const { data, error, count } = await query.range(from, to);
+    if (error) return res.status(500).json({ error: error.message });
+
+    return res.json({
+      jobs: data ?? [],
+      total: count ?? 0,
+      page,
+      totalPages: Math.ceil((count ?? 0) / limit),
+    });
+  }
+
+  // Legacy: return flat array
+  const { data, error } = await supabase
+    .from("reposts")
     .select("*")
     .eq("user_id", req.user.userId)
     .order("created_at", { ascending: false })

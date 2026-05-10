@@ -10,11 +10,14 @@
   },
   "jest": {
     "testEnvironment": "node",
-    "testMatch": ["**/tests/**/*.test.js"],
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ],
     "testTimeout": 15000
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
+    "apple-signin-auth": "^2.0.0",
     "axios": "^1.6.5",
     "bcryptjs": "^2.4.3",
     "bullmq": "^5.1.1",

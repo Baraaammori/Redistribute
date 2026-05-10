@@ -23,7 +23,6 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
-
 export const api = {
   auth: {
     signup:  (body: { email: string; password: string; name: string }) =>
@@ -48,6 +47,11 @@ export const api = {
 
   reposts: {
     list:   () => request<any[]>("/api/reposts"),
+    listPaged: (params: { page?: number; limit?: number; status?: string }) => {
+      const q = new URLSearchParams({ page: String(params.page ?? 1), limit: String(params.limit ?? 20) });
+      if (params.status && params.status !== "all") q.set("status", params.status);
+      return request<{ jobs: any[]; total: number; page: number; totalPages: number }>(`/api/reposts?${q}`);
+    },
     create: (body: any) => request<any>("/api/reposts", { method: "POST", body: JSON.stringify(body) }),
     delete: (id: string) => request(`/api/reposts/${id}`, { method: "DELETE" }),
     retry:  (id: string) => request(`/api/reposts/${id}/retry`, { method: "POST" }),
@@ -55,7 +59,20 @@ export const api = {
 
   stripe: {
     checkout: () => request<{ url: string }>("/api/stripe/checkout", { method: "POST" }),
-    portal:   () => request<{ url: string }>("/api/stripe/portal", { method: "POST" }),
+  },
+
+  billing: {
+    status:   () => request<{
+      plan: string;
+      status: string;
+      current_period_end: string | null;
+      cancel_at: string | null;
+      reposts_used: number;
+      reposts_limit: number | null;
+      auto_republish_count: number;
+      reset_date: string;
+    }>("/api/billing/status"),
+    invoices: () => request<{ id: string; date: string; amount: number; currency: string; status: string; pdf: string | null }[]>("/api/billing/invoices"),
   },
 
   bestTime: {
@@ -74,4 +91,4 @@ export const api = {
 
 };
 
-export { getToken, getAuthHeaders };
+export { BASE, getToken, getAuthHeaders };
