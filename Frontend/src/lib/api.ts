@@ -122,14 +122,6 @@ export const api = {
     retry:    (jobId: string) => request<any>(`/api/auto-republish/${jobId}/retry`, { method: "PATCH" }),
   },
 
-  // ── Captions ────────────────────────────────────────────────────────────────
-  captions: {
-    generate: (videoId: string, body?: any) =>
-      request<any>(`/api/captions/${videoId}/generate`, { method: "POST", body: JSON.stringify(body || {}) }),
-    list: (videoId: string) =>
-      request<any[]>(`/api/captions/${videoId}`),
-  },
-
   // ── Auto-Cut ────────────────────────────────────────────────────────────────
   autoCut: {
     start: (body: { videoId: string; clipLengthSeconds: number; targetPlatforms: string[] }) =>

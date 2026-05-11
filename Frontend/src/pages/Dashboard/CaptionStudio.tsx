@@ -86,6 +86,14 @@ export default function CaptionStudio() {
   const currentVideoObj = videos.find(v => v.id === selectedVideo);
   const videoSrc = currentVideoObj?.file_url || currentVideoObj?.public_url || "";
 
+  const refreshCaptions = async () => {
+    if (!selectedVideo) return;
+    try {
+      const list = await api.captions.list(selectedVideo);
+      setCaptions(list || []);
+    } catch { /* ignore */ }
+  };
+
   const handleGenerate = async () => {
     if (!selectedVideo) return;
     setGenerating(true); setError("");
@@ -95,13 +103,19 @@ export default function CaptionStudio() {
         platform, clip_id: selectedClip || undefined,
         style: { wordsPerLine, fontsize: fontSize, fontname: fontFamily, bold: bold ? 1 : 0, marginV: posData?.marginV ?? 80, alignment: position === "top" ? 8 : position === "center" ? 5 : 2 },
       });
+      // Immediate fetch — job may have already finished by the time generate() resolves
+      await refreshCaptions();
       let attempts = 0;
-      const poll = setInterval(async () => {
+      const pollId = setInterval(async () => {
         attempts++;
-        const list = await api.captions.list(selectedVideo);
-        setCaptions(list || []);
-        const done = list?.find((c: any) => c.platform === platform && (c.status === "done" || c.status === "failed"));
-        if (done || attempts > 30) clearInterval(poll);
+        try {
+          const list = await api.captions.list(selectedVideo);
+          setCaptions(list || []);
+          const done = list?.find((c: any) => c.platform === platform && (c.status === "done" || c.status === "failed"));
+          if (done || attempts > 30) clearInterval(pollId);
+        } catch {
+          if (attempts > 30) clearInterval(pollId);
+        }
       }, 3000);
     } catch (err: any) {
       setError(err.message || "Generation failed");
@@ -270,19 +284,30 @@ export default function CaptionStudio() {
             </div>
           )}
 
-          {/* Generate button */}
-          <button onClick={handleGenerate} disabled={!selectedVideo || generating}
-            style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 28px",
-              background: generating ? "rgba(124,92,252,0.5)" : "linear-gradient(135deg, #7C5CFC, #9B7EFF)",
-              color: "white", border: "none", borderRadius: 100, fontSize: 14,
-              cursor: (!selectedVideo || generating) ? "not-allowed" : "pointer",
-              fontFamily: "'DM Sans',sans-serif", fontWeight: 600, marginBottom: 16,
-              boxShadow: generating ? "none" : "0 4px 20px rgba(124,92,252,0.3)",
-            }}>
-            {generating
-              ? <><Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> Generating…</>
-              : <><Sparkles size={15} /> Generate Captions</>}
-          </button>
+          {/* Generate + Refresh buttons */}
+          <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 16 }}>
+            <button onClick={handleGenerate} disabled={!selectedVideo || generating}
+              style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 28px",
+                background: generating ? "rgba(124,92,252,0.5)" : "linear-gradient(135deg, #7C5CFC, #9B7EFF)",
+                color: "white", border: "none", borderRadius: 100, fontSize: 14,
+                cursor: (!selectedVideo || generating) ? "not-allowed" : "pointer",
+                fontFamily: "'DM Sans',sans-serif", fontWeight: 600,
+                boxShadow: generating ? "none" : "0 4px 20px rgba(124,92,252,0.3)",
+              }}>
+              {generating
+                ? <><Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> Generating…</>
+                : <><Sparkles size={15} /> Generate Captions</>}
+            </button>
+            <button onClick={refreshCaptions} disabled={!selectedVideo}
+              title="Refresh caption status"
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "12px 18px",
+                background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.10)",
+                color: "rgba(255,255,255,0.45)", borderRadius: 100, fontSize: 13,
+                cursor: !selectedVideo ? "not-allowed" : "pointer",
+              }}>
+              <RefreshCw size={14} /> Refresh
+            </button>
+          </div>
 
           {pendingCaption && (
             <div style={{ background: "rgba(124,92,252,0.08)", border: "1px solid rgba(124,92,252,0.2)", borderRadius: 12, padding: "14px 18px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
@@ -290,7 +315,7 @@ export default function CaptionStudio() {
               <span style={{ fontSize: 13, color: "#9B7EFF" }}>
                 {STATUS_LABELS[pendingCaption.status] || "Processing… 1–3 min."}
               </span>
-              <button onClick={() => api.captions.list(selectedVideo).then(setCaptions)} style={{ marginLeft: "auto", background: "none", border: "none", color: "rgba(255,255,255,0.3)", cursor: "pointer" }}>
+              <button onClick={refreshCaptions} style={{ marginLeft: "auto", background: "none", border: "none", color: "rgba(255,255,255,0.3)", cursor: "pointer" }}>
                 <RefreshCw size={14} />
               </button>
             </div>

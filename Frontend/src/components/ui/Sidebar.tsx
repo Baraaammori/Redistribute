@@ -5,7 +5,7 @@ import { api } from '../../lib/api';
 import {
   LayoutDashboard, PlusCircle, ListOrdered, RefreshCw,
   Link2, CreditCard, Settings, LogOut,
-  Upload, Film, FileText, Scissors,
+  Upload, Film, Scissors,
 } from 'lucide-react';
 
 // ── nav definition ────────────────────────────────────────────────────────────
@@ -29,7 +29,6 @@ const NAV_GROUPS = [
     items: [
       { id: 'upload',   label: 'Upload Center',   icon: Upload,          path: '/dashboard/upload' },
       { id: 'library',  label: 'Video Library',   icon: Film,            path: '/dashboard/library' },
-      { id: 'captions', label: 'Captions',        icon: FileText,        path: '/dashboard/captions' },
       { id: 'auto-cutter', label: 'Auto-Cutter',    icon: Scissors,        path: '/dashboard/auto-cutter' },
     ],
   },
@@ -51,7 +50,6 @@ export const ROUTE_TITLES: Record<string, string> = {
   '/dashboard/auto-republish': 'Auto-Republish',
   '/dashboard/upload':         'Upload Center',
   '/dashboard/library':        'Video Library',
-  '/dashboard/captions':       'Captions Studio',
   '/dashboard/auto-cutter':    'Auto-Cutter',
   '/dashboard/accounts':       'Accounts',
   '/dashboard/billing':        'Billing',
@@ -165,8 +163,6 @@ export function Sidebar() {
   };
 
   const initials = user?.email ? user.email.slice(0, 2).toUpperCase() : 'RD';
-  const isPro = user?.plan === 'pro' || user?.plan === 'team';
-
   // ── Shared nav items (for both desktop sidebar and mobile bottom bar) ────────
   const flatItems = NAV_GROUPS.flatMap(g => g.items);
 
