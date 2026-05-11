@@ -137,12 +137,16 @@ export const api = {
 
   // ── Upload system ───────────────────────────────────────────────────────────
   upload: {
-    // Step 1: reserve a storage path for TUS upload
-    init: (body: { fileName: string; fileSize: number }) =>
-      request<{ filePath: string }>("/api/upload/init", { method: "POST", body: JSON.stringify(body) }),
-    // Step 2: register the completed TUS upload in the DB
+    // Step 1: create R2 multipart upload, get presigned part URLs
+    init: (body: { fileName: string; fileSize: number; mimeType?: string }) =>
+      request<{ key: string; uploadId: string; parts: { partNumber: number; signedUrl: string }[]; partSize: number }>(
+        "/api/upload/init", { method: "POST", body: JSON.stringify(body) }),
+    // Step 2: tell backend all parts are done — backend calls ListParts + CompleteMultipartUpload
+    completeMultipart: (body: { key: string; uploadId: string }) =>
+      request<{ url: string; key: string }>("/api/upload/complete-multipart", { method: "POST", body: JSON.stringify(body) }),
+    // Step 3: save metadata to DB
     complete: (body: {
-      filePath: string; fileName: string; fileSize: number; mimeType?: string;
+      key: string; fileName: string; fileSize: number;
       duration?: number; width?: number; height?: number; orientation?: string; aspectRatio?: string;
       title: string; description?: string; tags?: string; mode?: string;
     }) => request<any>("/api/upload/complete", { method: "POST", body: JSON.stringify(body) }),

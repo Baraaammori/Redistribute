@@ -1,134 +1,160 @@
-// ─── Storage Service ─────────────────────────────────────────────────────────
-// Uses Supabase Storage for video files and clips
+// ─── Storage Service (Cloudflare R2) ─────────────────────────────────────────
+// All file I/O goes to R2 via S3-compatible API.
+// Multipart upload helpers are used for large browser-initiated uploads.
 // ──────────────────────────────────────────────────────────────────────────────
-const fs = require("fs");
+const {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  HeadObjectCommand,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
+  ListPartsCommand,
+} = require("@aws-sdk/client-s3");
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
+const fs   = require("fs");
 const path = require("path");
-const supabase = require("./supabase");
 
-const BUCKET_NAME = "videos";
+const r2 = new S3Client({
+  region:   "auto",
+  endpoint: process.env.R2_ENDPOINT,
+  credentials: {
+    accessKeyId:     process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+  },
+});
 
-/**
- * Ensure the storage bucket exists
- */
-async function ensureBucket() {
-  const { data: buckets } = await supabase.storage.listBuckets();
-  const exists = buckets?.some(b => b.name === BUCKET_NAME);
-  if (!exists) {
-    await supabase.storage.createBucket(BUCKET_NAME, {
-      public: true,
-      fileSizeLimit: 524288000, // 500MB
-      allowedMimeTypes: ["video/mp4", "video/quicktime", "video/webm", "video/avi", "video/x-matroska", "image/jpeg", "image/png", "image/webp"],
-    });
-  }
+const BUCKET_NAME = process.env.R2_BUCKET || "videos";
+const PART_SIZE   = 10 * 1024 * 1024; // 10 MB — well above S3's 5 MB minimum
+
+function getPublicUrl(key) {
+  return `${process.env.R2_PUBLIC_URL}/${key}`;
 }
 
-/**
- * Upload a file to Supabase Storage.
- *
- * @param {string|Buffer} localPathOrBuffer
- *   - string → file path; streamed via REST API (no full file loaded into RAM)
- *   - Buffer → in-memory bytes (use for small files: thumbnails, watermarks, SRTs)
- * @param {string} storagePath - path within bucket
- * @param {string} contentType - MIME type
- * @returns {{ url: string, path: string }}
- */
+// ── Backend-initiated upload (thumbnails, clips, SRTs) ────────────────────────
 async function uploadFile(localPathOrBuffer, storagePath, contentType = "video/mp4") {
-  await ensureBucket();
+  const body = typeof localPathOrBuffer === "string"
+    ? fs.createReadStream(localPathOrBuffer)
+    : localPathOrBuffer;
 
-  if (typeof localPathOrBuffer === "string") {
-    // Stream directly from disk — avoids loading the full video into RAM
-    const axios = require("axios");
-    const { size } = fs.statSync(localPathOrBuffer);
-    const stream = fs.createReadStream(localPathOrBuffer);
+  await r2.send(new PutObjectCommand({
+    Bucket:      BUCKET_NAME,
+    Key:         storagePath,
+    Body:        body,
+    ContentType: contentType,
+  }));
 
-    try {
-      await axios({
-        method: "post",
-        url: `${process.env.SUPABASE_URL}/storage/v1/object/${BUCKET_NAME}/${storagePath}`,
-        data: stream,
-        headers: {
-          Authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
-          "Content-Type": contentType,
-          "Content-Length": size,
-          "x-upsert": "true",
-        },
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity,
-      });
-    } catch (err) {
-      const msg = err.response?.data?.message || err.response?.data?.error || err.message;
-      throw new Error(`Storage upload failed: ${msg}`);
-    }
-  } else {
-    // Buffer upload for small in-memory files (thumbnails, watermarks, SRTs)
-    const { error } = await supabase.storage
-      .from(BUCKET_NAME)
-      .upload(storagePath, localPathOrBuffer, { contentType, upsert: true });
-
-    if (error) throw new Error(`Storage upload failed: ${error.message}`);
-  }
-
-  const { data: urlData } = supabase.storage
-    .from(BUCKET_NAME)
-    .getPublicUrl(storagePath);
-
-  return {
-    url: urlData.publicUrl,
-    path: storagePath,
-  };
+  return { url: getPublicUrl(storagePath), path: storagePath };
 }
 
-/**
- * Delete a file from Supabase Storage
- */
+// ── Delete ────────────────────────────────────────────────────────────────────
 async function deleteFile(storagePath) {
-  const { error } = await supabase.storage
-    .from(BUCKET_NAME)
-    .remove([storagePath]);
-  if (error) console.warn(`Storage delete warning: ${error.message}`);
+  try {
+    await r2.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: storagePath }));
+  } catch (e) {
+    console.warn("R2 delete warning:", e.message);
+  }
 }
 
-/**
- * Download a file from URL to local temp path
- */
+// ── Check existence ───────────────────────────────────────────────────────────
+async function fileExists(key) {
+  try {
+    await r2.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: key }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ── Multipart upload (browser → R2 directly via presigned URLs) ───────────────
+
+async function createMultipartUpload(key, contentType) {
+  const { UploadId } = await r2.send(new CreateMultipartUploadCommand({
+    Bucket:      BUCKET_NAME,
+    Key:         key,
+    ContentType: contentType || "video/mp4",
+  }));
+  return UploadId;
+}
+
+async function getPresignedPartUrls(key, uploadId, totalParts) {
+  const urls = [];
+  for (let i = 1; i <= totalParts; i++) {
+    const url = await getSignedUrl(r2, new UploadPartCommand({
+      Bucket:     BUCKET_NAME,
+      Key:        key,
+      UploadId:   uploadId,
+      PartNumber: i,
+    }), { expiresIn: 7200 }); // 2-hour window
+    urls.push({ partNumber: i, signedUrl: url });
+  }
+  return urls;
+}
+
+// Backend fetches ETags via ListParts so the frontend never needs to expose them
+async function completeMultipartUpload(key, uploadId) {
+  const listed = await r2.send(new ListPartsCommand({
+    Bucket:   BUCKET_NAME,
+    Key:      key,
+    UploadId: uploadId,
+  }));
+
+  const parts = (listed.Parts || []).map(p => ({
+    PartNumber: p.PartNumber,
+    ETag:       p.ETag,
+  }));
+
+  if (!parts.length) throw new Error("No parts found for this upload — did any chunks complete?");
+
+  await r2.send(new CompleteMultipartUploadCommand({
+    Bucket:          BUCKET_NAME,
+    Key:             key,
+    UploadId:        uploadId,
+    MultipartUpload: { Parts: parts },
+  }));
+
+  return getPublicUrl(key);
+}
+
+async function abortMultipartUpload(key, uploadId) {
+  try {
+    await r2.send(new AbortMultipartUploadCommand({ Bucket: BUCKET_NAME, Key: key, UploadId: uploadId }));
+  } catch (e) {
+    console.warn("Abort multipart warning:", e.message);
+  }
+}
+
+// ── Temp file helpers (used by clip processing / ffprobe download) ─────────────
 async function downloadToTemp(url, filename) {
-  const axios = require("axios");
-  const tmpDir = path.join(require("os").tmpdir(), "redistribute");
+  const axios  = require("axios");
+  const os     = require("os");
+  const tmpDir = path.join(os.tmpdir(), "redistribute");
   if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-
-  const dest = path.join(tmpDir, filename);
+  const dest   = path.join(tmpDir, filename);
   const writer = fs.createWriteStream(dest);
-  const response = await axios({ url, method: "GET", responseType: "stream" });
-  response.data.pipe(writer);
-
+  const res    = await axios({ url, method: "GET", responseType: "stream" });
+  res.data.pipe(writer);
   return new Promise((resolve, reject) => {
     writer.on("finish", () => resolve(dest));
     writer.on("error", reject);
   });
 }
 
-/**
- * Clean up temp files
- */
 function cleanupTemp(filePath) {
-  try {
-    if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  } catch (e) {
-    console.warn("Temp cleanup warning:", e.message);
-  }
+  try { if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath); }
+  catch (e) { console.warn("Temp cleanup warning:", e.message); }
 }
 
-/**
- * Clean up a temp directory
- */
 function cleanupTempDir(dirPath) {
-  try {
-    if (dirPath && fs.existsSync(dirPath)) {
-      fs.rmSync(dirPath, { recursive: true, force: true });
-    }
-  } catch (e) {
-    console.warn("Temp dir cleanup warning:", e.message);
-  }
+  try { if (dirPath && fs.existsSync(dirPath)) fs.rmSync(dirPath, { recursive: true, force: true }); }
+  catch (e) { console.warn("Temp dir cleanup warning:", e.message); }
 }
 
-module.exports = { uploadFile, deleteFile, downloadToTemp, cleanupTemp, cleanupTempDir, ensureBucket, BUCKET_NAME };
+module.exports = {
+  uploadFile, deleteFile, fileExists,
+  createMultipartUpload, getPresignedPartUrls, completeMultipartUpload, abortMultipartUpload,
+  downloadToTemp, cleanupTemp, cleanupTempDir,
+  BUCKET_NAME, PART_SIZE,
+};

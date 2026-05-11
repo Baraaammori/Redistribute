@@ -17,58 +17,85 @@ const supabase = require("../lib/supabase");
 const { authenticateToken } = require("../middleware/auth");
 const { analyzeVideo, generateClips } = require("../lib/ffmpeg");
 const { decide, calculateClipTimestamps } = require("../lib/smartEngine");
-const { uploadFile, cleanupTemp, cleanupTempDir, BUCKET_NAME } = require("../lib/storage");
+const {
+  uploadFile, cleanupTemp, cleanupTempDir, fileExists,
+  createMultipartUpload, getPresignedPartUrls, completeMultipartUpload, abortMultipartUpload,
+  PART_SIZE,
+} = require("../lib/storage");
 const connection = require("../lib/redis");
 
 const processQueue = new Queue("video-processing", { connection });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// POST /api/upload/init — Reserve a storage path for a TUS upload
-// Returns the filePath the frontend should use as TUS objectName metadata
+// POST /api/upload/init — Create R2 multipart upload + return presigned part URLs
 // ──────────────────────────────────────────────────────────────────────────────
 router.post("/init", authenticateToken, async (req, res) => {
-  const { fileName, fileSize } = req.body;
-  if (!fileName) return res.status(400).json({ error: "fileName is required" });
+  const { fileName, fileSize, mimeType } = req.body;
+  if (!fileName || !fileSize) return res.status(400).json({ error: "fileName and fileSize are required" });
 
   const userId = req.user.userId;
-  const ext = (fileName.split(".").pop() || "mp4").toLowerCase();
-  const safe = fileName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
-  const filePath = `uploads/${userId}/${Date.now()}_${safe}`;
 
-  // Plan check for free users
   const { data: user } = await supabase.from("users").select("plan").eq("id", userId).single();
   const isPro = user?.plan === "pro" || user?.plan === "team";
-  if (!isPro && fileSize && fileSize > 500 * 1024 * 1024) {
+  if (!isPro && fileSize > 500 * 1024 * 1024) {
     return res.status(403).json({ error: "File too large for free plan (max 500 MB). Upgrade to Pro." });
   }
 
-  res.json({ filePath });
+  const safe       = fileName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
+  const key        = `uploads/${userId}/${Date.now()}_${safe}`;
+  const totalParts = Math.max(1, Math.ceil(fileSize / PART_SIZE));
+
+  try {
+    const uploadId = await createMultipartUpload(key, mimeType || "video/mp4");
+    const parts    = await getPresignedPartUrls(key, uploadId, totalParts);
+    res.json({ key, uploadId, parts, partSize: PART_SIZE });
+  } catch (err) {
+    console.error("[upload/init]", err.message);
+    res.status(500).json({ error: `Failed to initialise upload: ${err.message}` });
+  }
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// POST /api/upload/complete — Register a TUS-uploaded file in the database
-// The file is already in Supabase Storage; this just saves the metadata.
+// POST /api/upload/complete-multipart — Finalise R2 multipart upload
+// ──────────────────────────────────────────────────────────────────────────────
+router.post("/complete-multipart", authenticateToken, async (req, res) => {
+  const { key, uploadId } = req.body;
+  const userId = req.user.userId;
+
+  if (!key || !uploadId) return res.status(400).json({ error: "key and uploadId are required" });
+  if (!key.startsWith(`uploads/${userId}/`)) return res.status(403).json({ error: "Invalid key" });
+
+  try {
+    const fileUrl = await completeMultipartUpload(key, uploadId);
+    res.json({ url: fileUrl, key });
+  } catch (err) {
+    await abortMultipartUpload(key, uploadId).catch(() => {});
+    console.error("[upload/complete-multipart]", err.message);
+    res.status(500).json({ error: `Failed to complete upload: ${err.message}` });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// POST /api/upload/complete — Register a completed R2 upload in the database
 // ──────────────────────────────────────────────────────────────────────────────
 router.post("/complete", authenticateToken, async (req, res) => {
   const {
-    filePath, fileName, fileSize, mimeType,
+    key, fileName, fileSize,
     duration, width, height, orientation, aspectRatio,
     title, description, tags, mode,
   } = req.body;
 
   const userId = req.user.userId;
 
-  if (!filePath) return res.status(400).json({ error: "filePath is required" });
-  if (!filePath.startsWith(`uploads/${userId}/`)) {
-    return res.status(403).json({ error: "Invalid file path" });
+  if (!key) return res.status(400).json({ error: "key is required" });
+  if (!key.startsWith(`uploads/${userId}/`)) {
+    return res.status(403).json({ error: "Invalid key" });
   }
 
-  // Verify the file actually landed in Supabase Storage
-  const dir = filePath.split("/").slice(0, -1).join("/");
-  const name = filePath.split("/").pop();
-  const { data: listing } = await supabase.storage.from(BUCKET_NAME).list(dir, { search: name, limit: 1 });
-  if (!listing?.length) {
-    return res.status(400).json({ error: "Upload not found in storage — did the TUS upload complete?" });
+  // Verify the file actually exists in R2
+  const exists = await fileExists(key);
+  if (!exists) {
+    return res.status(400).json({ error: "Upload not found in R2 — did the multipart upload complete?" });
   }
 
   // Plan check for duration
@@ -78,9 +105,7 @@ router.post("/complete", authenticateToken, async (req, res) => {
     return res.status(403).json({ error: "Video too long for free plan (max 10 minutes). Upgrade to Pro." });
   }
 
-  // Public URL
-  const { data: urlData } = supabase.storage.from(BUCKET_NAME).getPublicUrl(filePath);
-  const fileUrl = urlData.publicUrl;
+  const fileUrl = `${process.env.R2_PUBLIC_URL}/${key}`;
 
   // Run smart engine with client-supplied metadata
   let smartDecision = null;
