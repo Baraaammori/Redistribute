@@ -17,6 +17,10 @@ import { PlatformDot, PlatformId } from '../../components/ui/PlatformDot';
 import NewRepost     from './NewRepost';
 import AutoRepublish from './AutoRepublish';
 import SettingsPage  from './Settings';
+import UploadCenter  from './UploadCenter';
+import VideoLibrary  from './VideoLibrary';
+import CaptionStudio from './CaptionStudio';
+import BrollEditor   from './BrollEditor';
 
 /* ── helpers ────────────────────────────────────────────────────────────────── */
 function getGreeting(): string {
@@ -929,6 +933,11 @@ export default function Dashboard() {
           <Route path="/repost/*"       element={<NewRepost />} />
           <Route path="/queue"          element={<QueuePage />} />
           <Route path="/auto-republish" element={<AutoRepublish />} />
+          <Route path="/upload"         element={<UploadCenter />} />
+          <Route path="/library"        element={<VideoLibrary />} />
+          <Route path="/captions"       element={<CaptionStudio />} />
+          <Route path="/captions/:id"   element={<CaptionStudio />} />
+          <Route path="/clips"          element={<BrollEditor />} />
           <Route path="/accounts"       element={<AccountsPage />} />
           <Route path="/billing"        element={<BillingPage />} />
           <Route path="/settings"       element={<SettingsPage />} />

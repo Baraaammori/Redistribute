@@ -5,6 +5,7 @@ import { api } from '../../lib/api';
 import {
   LayoutDashboard, PlusCircle, ListOrdered, RefreshCw,
   Link2, CreditCard, Settings, LogOut,
+  Upload, Film, FileText, Scissors,
 } from 'lucide-react';
 
 // ── nav definition ────────────────────────────────────────────────────────────
@@ -24,6 +25,15 @@ const NAV_GROUPS = [
     ],
   },
   {
+    label: 'Video Tools',
+    items: [
+      { id: 'upload',   label: 'Upload Center',   icon: Upload,          path: '/dashboard/upload' },
+      { id: 'library',  label: 'Video Library',   icon: Film,            path: '/dashboard/library' },
+      { id: 'captions', label: 'Captions',        icon: FileText,        path: '/dashboard/captions' },
+      { id: 'clips',    label: 'AI Clips',        icon: Scissors,        path: '/dashboard/clips' },
+    ],
+  },
+  {
     label: 'Account',
     items: [
       { id: 'accounts', label: 'Accounts',        icon: Link2,           path: '/dashboard/accounts' },
@@ -39,6 +49,10 @@ export const ROUTE_TITLES: Record<string, string> = {
   '/dashboard/repost':         'New Repost',
   '/dashboard/queue':          'Queue',
   '/dashboard/auto-republish': 'Auto-Republish',
+  '/dashboard/upload':         'Upload Center',
+  '/dashboard/library':        'Video Library',
+  '/dashboard/captions':       'Captions Studio',
+  '/dashboard/clips':          'AI Clips',
   '/dashboard/accounts':       'Accounts',
   '/dashboard/billing':        'Billing',
   '/dashboard/settings':       'Settings',

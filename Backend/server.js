@@ -2,13 +2,11 @@ require("dotenv").config();
 const express = require("express");
 const cors    = require("cors");
 
-// ── STRIPE ENV CHECK (fail fast before accepting traffic) ─────────────────────
+// ── STRIPE ENV CHECK — warn only, do not exit (routes use lazy-init) ──────────
 const REQUIRED_STRIPE = ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PRO_PRICE_ID"];
 const missingStripe = REQUIRED_STRIPE.filter(k => !process.env[k]);
 if (missingStripe.length) {
-  console.error(`❌  Missing required Stripe env vars: ${missingStripe.join(", ")}`);
-  console.error("    Add them to .env and restart the server.");
-  process.exit(1);
+  console.error(`⚠️  Missing Stripe env vars: ${missingStripe.join(", ")} — billing routes will return 503`);
 }
 
 const app = express();
@@ -40,34 +38,65 @@ app.use(cors({
 // Stripe webhook needs raw body — must be before express.json()
 app.use("/api/stripe/webhook", express.raw({ type: "application/json" }));
 
-// Apple callback is form_post
-app.use("/api/auth/apple/callback", express.urlencoded({ extended: true }));
-
 app.use(express.json());
 
+// ── SAFE REQUIRE — one broken module won't take down the whole server ─────────
+const routeStatus = {};
+function safeRequire(modPath) {
+  try {
+    const mod = require(modPath);
+    routeStatus[modPath] = "ok";
+    return mod;
+  } catch (e) {
+    routeStatus[modPath] = e.message;
+    console.error(`[boot] FAILED to load ${modPath}: ${e.message}`);
+    const stub = require("express").Router();
+    stub.use((_req, res) => res.status(503).json({ error: `Route module unavailable: ${e.message}` }));
+    return stub;
+  }
+}
+
 // ── ROUTES ────────────────────────────────────────────────────────────────────
-app.use("/api/auth",          require("./routes/auth"));
-app.use("/api/accounts",      require("./routes/accounts"));
-app.use("/api/videos",        require("./routes/videos"));
-app.use("/api/reposts",       require("./routes/reposts"));
-app.use("/api/stripe",        require("./routes/stripe"));
-app.use("/api/billing",       require("./routes/billing"));
-app.use("/api/best-time",     require("./routes/besttime"));
-app.use("/api/auto-republish",require("./routes/autoRepublish"));
+// Core SaaS (simple-saas)
+app.use("/api/auth",           safeRequire("./routes/auth"));
+app.use("/api/accounts",       safeRequire("./routes/accounts"));
+app.use("/api/videos",         safeRequire("./routes/videos"));
+app.use("/api/reposts",        safeRequire("./routes/reposts"));
+app.use("/api/stripe",         safeRequire("./routes/stripe"));
+app.use("/api/billing",        safeRequire("./routes/billing"));
+app.use("/api/best-time",      safeRequire("./routes/besttime"));
+app.use("/api/auto-republish", safeRequire("./routes/autoRepublish"));
+
+// Video editor (v2-video-editor)
+app.use("/api/upload",         safeRequire("./routes/upload"));
+app.use("/api/captions",       safeRequire("./routes/captions"));
+app.use("/api/ai-clip",        safeRequire("./routes/ai-clip"));
+app.use("/api/broll",          safeRequire("./routes/broll"));
+app.use("/api/settings",       safeRequire("./routes/settings"));
+
+// Admin & shop
+app.use("/api/admin",          safeRequire("./routes/admin"));
+app.use("/api/shop",           safeRequire("./routes/shop"));
 
 // ── WORKERS & POLLERS ─────────────────────────────────────────────────────────
-require("./lib/distributionWorker");
+try { require("./lib/distributionWorker"); }   catch (e) { console.error("[distributionWorker] failed to load:", e.message); }
 
-const { startAnalyticsPoller }     = require("./lib/analyticsPoller");
-const { startAutoRepublishPoller } = require("./workers/autoRepublishPoller");
-const { startMonthlyResetCron }    = require("./workers/resetMonthlyLimits");
-
-startAnalyticsPoller();
-startAutoRepublishPoller();
-startMonthlyResetCron();
+try {
+  const { startAnalyticsPoller }     = require("./lib/analyticsPoller");
+  const { startAutoRepublishPoller } = require("./workers/autoRepublishPoller");
+  const { startMonthlyResetCron }    = require("./workers/resetMonthlyLimits");
+  startAnalyticsPoller();
+  startAutoRepublishPoller();
+  startMonthlyResetCron();
+} catch (e) {
+  console.error("[pollers] failed to start:", e.message);
+}
 
 // ── HEALTH ────────────────────────────────────────────────────────────────────
-app.get("/api/health", (_req, res) => res.json({ status: "ok", ts: new Date() }));
+app.get("/api/health", (_req, res) => res.json({ status: "ok", ts: new Date(), routeStatus }));
+
+// ── 404 JSON HANDLER ──────────────────────────────────────────────────────────
+app.use((req, res) => res.status(404).json({ error: "Not Found", path: req.path }));
 
 // ── ERROR HANDLER ─────────────────────────────────────────────────────────────
 app.use((err, _req, res, _next) => {
