@@ -124,7 +124,7 @@ export const api = {
 
   // ── Captions ────────────────────────────────────────────────────────────────
   captions: {
-    generate: (videoId: string, body?: { language?: string; model?: string }) =>
+    generate: (videoId: string, body?: any) =>
       request<any>(`/api/captions/${videoId}/generate`, { method: "POST", body: JSON.stringify(body || {}) }),
     list: (videoId: string) =>
       request<any[]>(`/api/captions/${videoId}`),
