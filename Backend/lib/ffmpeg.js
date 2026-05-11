@@ -123,7 +123,7 @@ async function generateClips(inputPath, outputDir, clipTimestamps) {
     const outputPath = path.join(outputDir, `clip_${clip.index}${ext}`);
 
     try {
-      await cutClip(inputPath, outputPath, clip.start_time, clip.duration, { reencode: true });
+      await cutClip(inputPath, outputPath, clip.start_time, clip.duration, { reencode: false });
       const stats = fs.statSync(outputPath);
       results.push({
         index: clip.index,
