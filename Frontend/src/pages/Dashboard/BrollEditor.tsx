@@ -45,7 +45,7 @@ export default function BrollEditor() {
     setStatus("idle");
     setResult(null);
     // Load existing segments if already detected
-    api.broll.getSegments(selectedId).then(segs => {
+    api.broll.segments(selectedId).then(segs => {
       if (segs?.length) {
         setSegments(segs);
         setSelSegs(new Set(segs.map((s: any) => s.id)));
