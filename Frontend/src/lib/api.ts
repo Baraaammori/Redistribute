@@ -130,6 +130,14 @@ export const api = {
       request<any[]>(`/api/captions/${videoId}`),
   },
 
+  // ── Auto-Cut ────────────────────────────────────────────────────────────────
+  autoCut: {
+    start: (body: { videoId: string; clipLengthSeconds: number; targetPlatforms: string[] }) =>
+      request<{ jobId: string; message: string }>("/api/auto-cut", { method: "POST", body: JSON.stringify(body) }),
+    status: (jobId: string) =>
+      request<{ jobId: string; state: string; progress: any }>(`/api/auto-cut/${jobId}/status`),
+  },
+
   // ── B-Roll ──────────────────────────────────────────────────────────────────
   broll: {
     analyze:  (videoId: string) =>

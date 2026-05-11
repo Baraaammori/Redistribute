@@ -1,13 +1,13 @@
 // ─── Caption Studio Route ────────────────────────────────────────────────────
-// POST /api/captions/:videoId/generate — Whisper → ASS → FFmpeg burn-in
-// GET  /api/captions/:videoId          — Poll status + URLs
+// POST /api/captions/:videoId/generate — Whisper → SRT (no FFmpeg burn-in)
+// GET  /api/captions/:videoId          — Poll status + SRT URL
+// GET  /api/captions/:videoId/srt      — Get SRT URL for a video
 // ─────────────────────────────────────────────────────────────────────────────
 // MEMORY ARCHITECTURE:
 //   1. Source video  → streamed to disk (never held in Node heap)
 //   2. Audio         → extracted as 60-second WAV chunks, each deleted after Whisper
-//   3. ASS/SRT files → generated in-memory then written to disk (tiny, <1MB)
-//   4. Captioned MP4 → FFmpeg writes directly to disk with -preset ultrafast -threads 1
-//   5. Upload        → streamed from disk via axios (no readFileSync)
+//   3. SRT file      → generated in-memory then written to disk (tiny, <1MB)
+//   4. NO FFmpeg burn-in — captions are served as .srt via native HTML <track>
 //   All temp dirs deleted in finally{} even on crash.
 // ─────────────────────────────────────────────────────────────────────────────
 const router   = require("express").Router();
@@ -67,7 +67,6 @@ router.post("/:videoId/generate", authenticateToken, async (req, res) => {
   const userId    = req.user.userId;
   const platform  = req.body.platform || "tiktok";
   const clipId    = req.body.clip_id || null;
-  const burnIn    = req.body.burn_in !== false;
 
   const { data: video } = await supabase
     .from("uploaded_videos").select("*")
@@ -121,53 +120,28 @@ router.post("/:videoId/generate", authenticateToken, async (req, res) => {
 
     if (!words.length) throw new Error("No speech detected — video may be silent or music-only");
 
-    // ── Step 4: Generate subtitle files (pure JS, ~1ms, negligible RAM) ────────
+    // ── Step 4: Generate SRT file (pure JS, ~1ms, negligible RAM) ────────────
     const style   = mergeStyle(platform, req.body.style);
-    const assPath = path.join(tmpDir, "captions.ass");
     const srtPath = path.join(tmpDir, "captions.srt");
-    generateASS(words, assPath, style);
     generateSRT(words, srtPath, style.wordsPerLine);
 
-    // ── Step 5: Upload SRT (streamed) ─────────────────────────────────────────
+    // ── Step 5: Upload SRT to Supabase Storage ────────────────────────────────
     const srtStoragePath = `${userId}/${videoId}/captions_${platform}.srt`;
     const { url: srtUrl } = await uploadFile(srtPath, srtStoragePath, "text/plain");
 
-    let captionedVideoUrl = null;
-
-    // ── Step 6: Burn captions into video ──────────────────────────────────────
-    if (burnIn) {
-      assertMemory("FFmpeg burn-in");
-      logMem("before burn-in");
-      await updateStatus(videoId, clipId, userId, platform, "rendering");
-
-      const captionedPath = path.join(tmpDir, "captioned.mp4");
-      await burnCaptions(videoPath, assPath, captionedPath);
-      logMem("after burn-in");
-
-      // Delete source video from disk immediately to free OS page cache
-      safeUnlink(videoPath); videoPath = null;
-
-      // Unique versioned path — prevents CDN from serving the cached old file
-      const ts = Date.now();
-      const captionedStoragePath = `${userId}/${videoId}/captioned_${platform}_${targetId}_v${ts}.mp4`;
-      const { url } = await uploadFile(captionedPath, captionedStoragePath, "video/mp4");
-      captionedVideoUrl = url;
-      logMem("after upload");
-    }
-
-    // ── Step 7: Persist result ────────────────────────────────────────────────
+    // ── Step 6: Persist result ────────────────────────────────────────────────
     await supabase.from("captions").upsert({
       video_id: videoId, clip_id: clipId, user_id: userId, platform,
-      srt_url: srtUrl, captioned_video_url: captionedVideoUrl,
+      srt_url: srtUrl,
       transcript_text: fullText,
       word_count: words.length,
-      style, status: "done", burn_in: burnIn,
+      style, status: "done",
       updated_at: new Date().toISOString(),
     }, { onConflict: "video_id,clip_id,platform" });
 
     await supabase.from("job_logs").insert({
       user_id: userId, video_id: videoId, action: "captions",
-      details: { platform, burn_in: burnIn, word_count: words.length, captioned_video_url: captionedVideoUrl },
+      details: { platform, word_count: words.length },
       status: "success",
     });
 
@@ -352,6 +326,24 @@ function normalizeWords(data) {
   return synthetic;
 }
 
+// ── GET /api/captions/:videoId/srt ────────────────────────────────────────────
+// Returns the SRT URL for the most recently completed caption job.
+// Clients can use this URL as the src for a native HTML <track> element.
+router.get("/:videoId/srt", authenticateToken, async (req, res) => {
+  const { data } = await supabase
+    .from("captions")
+    .select("srt_url, status")
+    .eq("video_id", req.params.videoId)
+    .eq("user_id", req.user.userId)
+    .eq("status", "done")
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .single();
+
+  if (!data?.srt_url) return res.status(404).json({ error: "No captions generated yet" });
+  res.json({ srtUrl: data.srt_url });
+});
+
 // ── Subtitle generation ───────────────────────────────────────────────────────
 
 function mergeStyle(platform, overrides = {}) {
@@ -378,21 +370,6 @@ function mergeStyle(platform, overrides = {}) {
   return merged;
 }
 
-function hexToASS(hex) {
-  const c = hex.replace("#", "");
-  if (c.length !== 6) return "&H00FFFFFF";
-  const r = c.slice(0, 2), g = c.slice(2, 4), b = c.slice(4, 6);
-  return `&H00${b}${g}${r}`;
-}
-
-function fmtASS(t) {
-  const h  = Math.floor(t / 3600);
-  const m  = Math.floor((t % 3600) / 60);
-  const s  = Math.floor(t % 60);
-  const cs = Math.round((t % 1) * 100);
-  return `${h}:${pad(m)}:${pad(s)}.${pad(cs)}`;
-}
-
 function fmtSRT(t) {
   const h  = Math.floor(t / 3600);
   const m  = Math.floor((t % 3600) / 60);
@@ -403,30 +380,6 @@ function fmtSRT(t) {
 
 function pad(n, len = 2) { return String(n).padStart(len, "0"); }
 
-function generateASS(words, outputPath, style) {
-  const header = `[Script Info]
-ScriptType: v4.00+
-PlayResX: 1080
-PlayResY: 1920
-ScaledBorderAndShadow: yes
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,${style.fontname},${style.fontsize},${style.primaryColour},&H000000FF,${style.outlineColour},&H00000000,${style.bold},0,0,0,100,100,0,0,1,${style.outline},${style.shadow || 1},${style.alignment},20,20,${style.marginV},1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-`;
-  const wpl = style.wordsPerLine || 3;
-  const lines = [];
-  for (let i = 0; i < words.length; i += wpl) {
-    const chunk = words.slice(i, i + wpl);
-    const text  = chunk.map(w => (w.word || "").trim()).join(" ");
-    lines.push(`Dialogue: 0,${fmtASS(chunk[0].start)},${fmtASS(chunk[chunk.length - 1].end)},Default,,0,0,0,,${text}`);
-  }
-  fs.writeFileSync(outputPath, header + lines.join("\n"));
-}
-
 function generateSRT(words, outputPath, wpl = 5) {
   let srt = ""; let idx = 1;
   for (let i = 0; i < words.length; i += wpl) {
@@ -436,33 +389,6 @@ function generateSRT(words, outputPath, wpl = 5) {
     idx++;
   }
   fs.writeFileSync(outputPath, srt.trim());
-}
-
-// ── FFmpeg burn-in ────────────────────────────────────────────────────────────
-// -preset ultrafast  → lowest encoder memory footprint (vs fast: ~40% less RAM)
-// -threads 1         → single-threaded prevents memory multiplication on free tier
-// -crf 23            → slightly lower quality but much smaller output file
-// No -maxBuffer bloat — stderr is small, we only capture errors
-function burnCaptions(videoPath, assPath, outputPath) {
-  return new Promise((resolve, reject) => {
-    const escapedAss = assPath.replace(/\\/g, "/").replace(/:/g, "\\:");
-    execFile("ffmpeg", [
-      "-y",
-      "-i", videoPath,
-      "-vf", `ass=${escapedAss}`,
-      "-c:v", "libx264",
-      "-preset", "ultrafast",   // lowest encoder RAM vs fast (~40% reduction)
-      "-crf", "23",
-      "-threads", "1",          // single-threaded: ~50MB vs ~200MB for multi-thread
-      "-c:a", "copy",
-      "-movflags", "+faststart",
-      outputPath,
-    ], { maxBuffer: 1024 * 1024 * 10, timeout: 900_000 }, (err, _, stderr) => {
-      if (err) return reject(new Error("Caption burn-in failed: " + (stderr || "").slice(-400)));
-      if (!fs.existsSync(outputPath)) return reject(new Error("Captioned output not created"));
-      resolve(outputPath);
-    });
-  });
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

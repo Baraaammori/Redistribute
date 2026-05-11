@@ -30,7 +30,7 @@ const NAV_GROUPS = [
       { id: 'upload',   label: 'Upload Center',   icon: Upload,          path: '/dashboard/upload' },
       { id: 'library',  label: 'Video Library',   icon: Film,            path: '/dashboard/library' },
       { id: 'captions', label: 'Captions',        icon: FileText,        path: '/dashboard/captions' },
-      { id: 'clips',    label: 'AI Clips',        icon: Scissors,        path: '/dashboard/clips' },
+      { id: 'auto-cutter', label: 'Auto-Cutter',    icon: Scissors,        path: '/dashboard/auto-cutter' },
     ],
   },
   {
@@ -52,7 +52,7 @@ export const ROUTE_TITLES: Record<string, string> = {
   '/dashboard/upload':         'Upload Center',
   '/dashboard/library':        'Video Library',
   '/dashboard/captions':       'Captions Studio',
-  '/dashboard/clips':          'AI Clips',
+  '/dashboard/auto-cutter':    'Auto-Cutter',
   '/dashboard/accounts':       'Accounts',
   '/dashboard/billing':        'Billing',
   '/dashboard/settings':       'Settings',

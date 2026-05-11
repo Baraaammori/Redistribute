@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Subtitles, Sparkles, Download, CheckCircle, Loader2, RefreshCw, Type, Palette, Move } from "lucide-react";
 import { api } from "../../lib/api";
-import VideoPlayer from "../../components/VideoPlayer";
 
 const PLATFORMS = [
   { id: "tiktok",    label: "TikTok",         icon: "🎵", desc: "Large bold · 2 words/line · Karaoke" },
@@ -33,11 +32,10 @@ const POSITIONS = [
 ];
 
 const STATUS_LABELS: Record<string, string> = {
-  processing:      "Starting up…",
-  downloading:     "Downloading video…",
-  extracting_audio:"Extracting audio…",
-  transcribing:    "Transcribing with Whisper… 1–3 min.",
-  rendering:       "Burning captions into video…",
+  processing:       "Starting up…",
+  downloading:      "Downloading video…",
+  extracting_audio: "Extracting audio…",
+  transcribing:     "Transcribing with Whisper… 1–3 min.",
 };
 
 const inputStyle: React.CSSProperties = {
@@ -61,7 +59,6 @@ export default function CaptionStudio() {
   const [selectedClip, setClip]       = useState<string>("");
   const [clips, setClips]             = useState<any[]>([]);
   const [platform, setPlatform]       = useState("tiktok");
-  const [burnIn, setBurnIn]           = useState(true);
   const [wordsPerLine, setWPL]        = useState(2);
   const [fontSize, setFontSize]       = useState(22);
   const [fontFamily, setFontFamily]   = useState("Arial Black");
@@ -95,7 +92,7 @@ export default function CaptionStudio() {
     try {
       const posData = POSITIONS.find(p => p.id === position);
       await api.captions.generate(selectedVideo, {
-        platform, clip_id: selectedClip || undefined, burn_in: burnIn,
+        platform, clip_id: selectedClip || undefined,
         style: { wordsPerLine, fontsize: fontSize, fontname: fontFamily, bold: bold ? 1 : 0, marginV: posData?.marginV ?? 80, alignment: position === "top" ? 8 : position === "center" ? 5 : 2 },
       });
       let attempts = 0;
@@ -113,8 +110,6 @@ export default function CaptionStudio() {
 
   const currentCaption = captions.find(c => c.platform === platform && c.status === "done");
   const pendingCaption = captions.find(c => c.platform === platform && !["done", "failed"].includes(c.status));
-  const previewVideoUrl = currentCaption?.captioned_video_url || "";
-
   return (
     <div style={{ padding: 40, maxWidth: 1100 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
@@ -122,7 +117,7 @@ export default function CaptionStudio() {
         <h1 style={{ fontFamily: "'Syne',sans-serif", fontSize: 28, fontWeight: 800, color: "white", letterSpacing: -1 }}>Caption Studio</h1>
       </div>
       <p style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", marginBottom: 32, fontWeight: 300 }}>
-        Auto-generate animated captions with full style control. Preview live before burning into video.
+        Auto-generate captions with Whisper. Captions display natively in the player — no video re-encoding needed.
       </p>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 24, alignItems: "start" }}>
@@ -254,7 +249,7 @@ export default function CaptionStudio() {
               </div>
             </div>
 
-            {/* Bold + Burn-in toggles */}
+            {/* Bold toggle */}
             <div style={{ display: "flex", gap: 20 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <button onClick={() => setBold(!bold)} style={{
@@ -264,15 +259,6 @@ export default function CaptionStudio() {
                   <div style={{ width: 14, height: 14, borderRadius: "50%", background: "white", position: "absolute", top: 3, left: bold ? 19 : 3, transition: "left 0.2s" }} />
                 </button>
                 <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Bold</span>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <button onClick={() => setBurnIn(!burnIn)} style={{
-                  width: 36, height: 20, borderRadius: 100, border: "none", cursor: "pointer",
-                  background: burnIn ? "#7C5CFC" : "rgba(255,255,255,0.1)", position: "relative",
-                }}>
-                  <div style={{ width: 14, height: 14, borderRadius: "50%", background: "white", position: "absolute", top: 3, left: burnIn ? 19 : 3, transition: "left 0.2s" }} />
-                </button>
-                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Burn into video</span>
               </div>
             </div>
           </div>
@@ -341,36 +327,53 @@ export default function CaptionStudio() {
         <div style={{ position: "sticky", top: 20 }}>
           <label style={labelStyle}>Live Preview</label>
           {videoSrc ? (
-            <VideoPlayer
-              src={previewVideoUrl || videoSrc}
-              title={previewVideoUrl ? "✅ Captioned Video" : "Original Video"}
-              processing={!!pendingCaption}
-              captionOverlay={!previewVideoUrl && !pendingCaption ? {
-                text: "Sample caption text",
-                fontFamily, fontSize, color: fontColor,
-                outlineColor, position, bold,
-              } : undefined}
-              maxHeight={600}
-            />
+            <>
+              <video
+                key={videoSrc + (currentCaption?.srt_url || "")}
+                controls
+                crossOrigin="anonymous"
+                style={{ width: "100%", maxHeight: 600, borderRadius: 12, background: "#000", display: "block" }}
+              >
+                <source src={videoSrc} type="video/mp4" />
+                {currentCaption?.srt_url && (
+                  <track
+                    kind="subtitles"
+                    src={currentCaption.srt_url}
+                    srcLang="en"
+                    label="English"
+                    default
+                  />
+                )}
+              </video>
+              {currentCaption?.srt_url ? (
+                <div style={{ marginTop: 8, fontSize: 11, color: "rgba(31,207,160,0.6)", textAlign: "center" }}>
+                  ✅ Captions loaded — press play to preview
+                </div>
+              ) : (
+                <div style={{ marginTop: 8, fontSize: 11, color: "rgba(155,126,255,0.5)", textAlign: "center" }}>
+                  Generate captions to see them in the player
+                </div>
+              )}
+            </>
           ) : (
             <div style={{ background: "#111118", borderRadius: 14, height: 400, display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid rgba(255,255,255,0.06)" }}>
               <span style={{ fontSize: 13, color: "rgba(255,255,255,0.2)" }}>Select a video to preview</span>
             </div>
           )}
-          {previewVideoUrl && (
-            <div style={{ marginTop: 8, fontSize: 11, color: "rgba(31,207,160,0.6)", textAlign: "center" }}>
-              ✅ Showing captioned result. Change settings & regenerate to update.
-            </div>
-          )}
-          {!previewVideoUrl && videoSrc && (
-            <div style={{ marginTop: 8, fontSize: 11, color: "rgba(155,126,255,0.5)", textAlign: "center" }}>
-              Caption style preview overlay. Generate to burn into video.
-            </div>
-          )}
         </div>
       </div>
 
-      <style>{`@keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }`}</style>
+      <style>{`
+        @keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
+        video::cue {
+          background: rgba(0, 0, 0, 0.75);
+          color: #ffffff;
+          font-size: 1.1em;
+          font-family: Inter, sans-serif;
+          border-radius: 4px;
+          padding: 2px 6px;
+        }
+      `}</style>
     </div>
   );
 }

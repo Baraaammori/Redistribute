@@ -20,7 +20,7 @@ import SettingsPage  from './Settings';
 import UploadCenter  from './UploadCenter';
 import VideoLibrary  from './VideoLibrary';
 import CaptionStudio from './CaptionStudio';
-import BrollEditor   from './BrollEditor';
+import AutoCutter    from './AutoCutter';
 
 /* ── helpers ────────────────────────────────────────────────────────────────── */
 function getGreeting(): string {
@@ -937,7 +937,7 @@ export default function Dashboard() {
           <Route path="/library"        element={<VideoLibrary />} />
           <Route path="/captions"       element={<CaptionStudio />} />
           <Route path="/captions/:id"   element={<CaptionStudio />} />
-          <Route path="/clips"          element={<BrollEditor />} />
+          <Route path="/auto-cutter"    element={<AutoCutter />} />
           <Route path="/accounts"       element={<AccountsPage />} />
           <Route path="/billing"        element={<BillingPage />} />
           <Route path="/settings"       element={<SettingsPage />} />

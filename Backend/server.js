@@ -74,6 +74,9 @@ app.use("/api/ai-clip",        safeRequire("./routes/ai-clip"));
 app.use("/api/broll",          safeRequire("./routes/broll"));
 app.use("/api/settings",       safeRequire("./routes/settings"));
 
+// Auto-cut
+app.use("/api/auto-cut",       safeRequire("./routes/auto-cut"));
+
 // Admin & shop
 app.use("/api/admin",          safeRequire("./routes/admin"));
 app.use("/api/shop",           safeRequire("./routes/shop"));
@@ -110,4 +113,4 @@ app.use((err, _req, res, _next) => {
 
 // ── START ─────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`✅  Redistribute API running on http://localhost:${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`✅  Redistribute API running on port ${PORT}`));
