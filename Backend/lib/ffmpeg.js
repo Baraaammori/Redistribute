@@ -112,8 +112,14 @@ async function generateClips(inputPath, outputDir, clipTimestamps) {
 
   const results = [];
 
+  // inputPath may be an HTTP URL — extract extension from pathname only
+  let ext = ".mp4";
+  try {
+    const p = inputPath.startsWith("http") ? new URL(inputPath).pathname : inputPath;
+    ext = path.extname(p) || ".mp4";
+  } catch {}
+
   for (const clip of clipTimestamps) {
-    const ext = path.extname(inputPath) || ".mp4";
     const outputPath = path.join(outputDir, `clip_${clip.index}${ext}`);
 
     try {

@@ -18,7 +18,7 @@ const { authenticateToken } = require("../middleware/auth");
 const { analyzeVideo, generateClips } = require("../lib/ffmpeg");
 const { decide, calculateClipTimestamps } = require("../lib/smartEngine");
 const {
-  uploadFile, cleanupTemp, cleanupTempDir, fileExists,
+  uploadFile, cleanupTempDir, fileExists,
   createMultipartUpload, getPresignedPartUrls, completeMultipartUpload, abortMultipartUpload,
   PART_SIZE,
 } = require("../lib/storage");
@@ -317,15 +317,14 @@ router.post("/:id/process", authenticateToken, async (req, res) => {
   try {
     await supabase.from("uploaded_videos").update({ status: "processing", mode: userConfig.mode || video.mode }).eq("id", req.params.id);
 
-    const { downloadToTemp } = require("../lib/storage");
-    const tempPath = await downloadToTemp(video.file_url, `process_${video.id}.mp4`);
-
     const count = userConfig.clip_count || decision.clip_count || 3;
     const duration = userConfig.clip_duration || decision.clip_duration || 45;
     const timestamps = calculateClipTimestamps(video.duration_seconds, count, duration);
 
     const clipsDir = path.join(os.tmpdir(), "redistribute_clips", video.id);
-    const clipResults = await generateClips(tempPath, clipsDir, timestamps);
+    // Pass the public R2 URL directly — FFmpeg reads only the byte ranges it needs
+    // (no full download; saves ~450 MB of tmpfs RAM on each process job)
+    const clipResults = await generateClips(video.file_url, clipsDir, timestamps);
 
     const savedClips = [];
     for (const clip of clipResults) {
@@ -358,7 +357,6 @@ router.post("/:id/process", authenticateToken, async (req, res) => {
       status: "success",
     });
 
-    cleanupTemp(tempPath);
     cleanupTempDir(clipsDir);
 
     res.json({ clips: savedClips, decision });
