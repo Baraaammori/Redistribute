@@ -23,17 +23,6 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
-async function uploadRequest<T>(path: string, formData: FormData): Promise<T> {
-  const token = getToken();
-  const res = await fetch(`${BASE}${path}`, {
-    method: "POST",
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    body: formData,
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "Upload failed");
-  return data as T;
-}
 
 export const api = {
   // ── Auth ────────────────────────────────────────────────────────────────────
@@ -148,15 +137,15 @@ export const api = {
 
   // ── Upload system ───────────────────────────────────────────────────────────
   upload: {
-    create: (file: File, meta: { title: string; description?: string; tags?: string; mode?: string }) => {
-      const fd = new FormData();
-      fd.append("video", file);
-      fd.append("title", meta.title);
-      if (meta.description) fd.append("description", meta.description);
-      if (meta.tags)        fd.append("tags", meta.tags);
-      if (meta.mode)        fd.append("mode", meta.mode);
-      return uploadRequest<any>("/api/upload", fd);
-    },
+    // Step 1: reserve a storage path for TUS upload
+    init: (body: { fileName: string; fileSize: number }) =>
+      request<{ filePath: string }>("/api/upload/init", { method: "POST", body: JSON.stringify(body) }),
+    // Step 2: register the completed TUS upload in the DB
+    complete: (body: {
+      filePath: string; fileName: string; fileSize: number; mimeType?: string;
+      duration?: number; width?: number; height?: number; orientation?: string; aspectRatio?: string;
+      title: string; description?: string; tags?: string; mode?: string;
+    }) => request<any>("/api/upload/complete", { method: "POST", body: JSON.stringify(body) }),
     list:        () => request<any[]>("/api/upload"),
     get:         (id: string) => request<any>(`/api/upload/${id}`),
     analyze:     (id: string) => request<any>(`/api/upload/${id}/analyze`, { method: "POST" }),
@@ -173,4 +162,4 @@ export const api = {
   },
 };
 
-export { BASE, getToken, getAuthHeaders };
+export { BASE, getToken, getAuthHeaders, request };
