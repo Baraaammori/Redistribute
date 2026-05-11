@@ -52,6 +52,7 @@ function uploadPart(chunk: Blob, signedUrl: string, onProgress: (loaded: number)
     xhr.onload  = () => xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`Part failed: HTTP ${xhr.status}`));
     xhr.onerror = () => reject(new Error("Network error"));
     xhr.open("PUT", signedUrl);
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
     xhr.send(chunk);
   });
 }

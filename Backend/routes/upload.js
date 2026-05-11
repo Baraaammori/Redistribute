@@ -131,7 +131,7 @@ router.post("/complete", authenticateToken, async (req, res) => {
       description: description || null,
       tags: tags ? (typeof tags === "string" ? tags.split(",").map(t => t.trim()) : tags) : null,
       file_url: fileUrl,
-      file_path: filePath,
+      file_path: key,
       file_size: fileSize || null,
       duration_seconds: duration || null,
       width: width || null,
