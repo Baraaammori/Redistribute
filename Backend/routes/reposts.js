@@ -129,7 +129,7 @@ if (process.env.DISABLE_WORKERS !== "true") {
       if (videoPath && fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
       if (transcodedPath && fs.existsSync(transcodedPath)) fs.unlinkSync(transcodedPath);
     }
-  }, { connection, concurrency: 2, attempts: 3, backoff: { type: "exponential", delay: 5000 } });
+  }, { connection, concurrency: 1, attempts: 3, backoff: { type: "exponential", delay: 30_000 } });
 
   worker.on("completed", job => console.log(`✅ [reposts] Job ${job.id} done`));
   worker.on("failed",    (job, err) => console.error(`❌ [reposts] Job ${job.id} failed (attempt ${job.attemptsMade}): ${err.message}`));
@@ -230,6 +230,10 @@ async function uploadToYouTube(videoPath, title, account) {
 }
 
 async function uploadToTikTok(videoPath, title, account) {
+  // Brief pause before hitting TikTok's init endpoint — prevents 429 bursts
+  // when multiple clips are queued back-to-back from the same auto-cut job.
+  await new Promise(r => setTimeout(r, 3000));
+
   const fileSize  = fs.statSync(videoPath).size;
   // TikTok: chunk_size must be 5 MB–64 MB (except the final chunk which can be smaller)
   const MAX_CHUNK = 64 * 1024 * 1024;
