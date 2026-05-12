@@ -5,7 +5,7 @@ FROM node:18-slim
 RUN apt-get update && apt-get install -y ffmpeg python3 python3-pip && rm -rf /var/lib/apt/lists/*
 
 # Install yt-dlp
-RUN pip3 install yt-dlp
+RUN pip3 install yt-dlp --break-system-packages
 
 WORKDIR /app
 
