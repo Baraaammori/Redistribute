@@ -44,7 +44,6 @@ async function refreshYouTubeToken(account) {
       expires_at: credentials.expiry_date
         ? new Date(credentials.expiry_date)
         : new Date(Date.now() + 3600_000),
-      error_message: null,
     };
     if (credentials.refresh_token) updates.refresh_token = credentials.refresh_token;
 
@@ -105,7 +104,6 @@ async function refreshTikTokToken(account) {
       access_token:  data.access_token,
       refresh_token: data.refresh_token || account.refresh_token,
       expires_at:    new Date(Date.now() + expiresIn * 1000).toISOString(),
-      error_message: null,
     };
 
     const { error: saveError } = await supabase
@@ -150,7 +148,6 @@ async function refreshInstagramToken(account) {
     const updates = {
       access_token:  data.access_token,
       expires_at:    new Date(Date.now() + (data.expires_in || 5184000) * 1000),
-      error_message: null,
     };
     await supabase.from("platform_accounts").update(updates).eq("id", account.id);
 
