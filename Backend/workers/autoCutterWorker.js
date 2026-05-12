@@ -100,7 +100,6 @@ if (process.env.DISABLE_WORKERS !== "true") {
           const { data: repost, error: repostInsertErr } = await supabase.from("reposts").insert({
             user_id:          userId,
             source_video_url: clipUrl,
-            source_platform:  "library",
             title:            clip?.title || clipTitle,
             destinations:     targetPlatforms,
             status:           "pending",
