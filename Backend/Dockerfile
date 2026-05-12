@@ -11,10 +11,13 @@ WORKDIR /app
 
 # Copy package files and install
 COPY package*.json ./
-RUN npm install
+RUN npm install --ignore-scripts
 
 # Copy rest of the code
 COPY . .
+
+# Run postinstall after scripts are copied
+RUN npm run postinstall
 
 # IMPORTANT: Hugging Face uses port 7860 by default
 ENV PORT=7860
