@@ -95,10 +95,10 @@ async function uploadToTikTok(videoPath, title, account) {
     account = await refreshTikTokToken(account);
   }
 
-  const fileSize  = fs.statSync(videoPath).size;
-  const MAX_CHUNK = 64 * 1024 * 1024;
-  const chunkSize    = Math.min(fileSize, MAX_CHUNK);
-  const totalChunks  = Math.ceil(fileSize / chunkSize);
+  const fileSize   = fs.statSync(videoPath).size;
+  const CHUNK_SIZE  = 10 * 1024 * 1024;
+  const chunkSize   = Math.min(fileSize, CHUNK_SIZE);
+  const totalChunks = Math.ceil(fileSize / CHUNK_SIZE);
 
   console.log(`📤 [dist] TikTok upload: ${(fileSize / 1e6).toFixed(1)} MB in ${totalChunks} chunk(s), title: "${title}"`);
 
@@ -173,8 +173,8 @@ async function uploadToTikTok(videoPath, title, account) {
   const fd = fs.openSync(videoPath, "r");
   try {
     for (let i = 0; i < totalChunks; i++) {
-      const start      = i * chunkSize;
-      const thisChunk  = Math.min(chunkSize, fileSize - start);
+      const start      = i * CHUNK_SIZE;
+      const thisChunk  = Math.min(CHUNK_SIZE, fileSize - start);
       const end        = start + thisChunk - 1;
       const buf        = Buffer.allocUnsafe(thisChunk);
       fs.readSync(fd, buf, 0, thisChunk, start);

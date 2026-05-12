@@ -234,11 +234,13 @@ async function uploadToTikTok(videoPath, title, account) {
   // when multiple clips are queued back-to-back from the same auto-cut job.
   await new Promise(r => setTimeout(r, 3000));
 
-  const fileSize  = fs.statSync(videoPath).size;
-  // TikTok: chunk_size must be 5 MB–64 MB (except the final chunk which can be smaller)
-  const MAX_CHUNK = 64 * 1024 * 1024;
-  const chunkSize    = Math.min(fileSize, MAX_CHUNK);
-  const totalChunks  = Math.ceil(fileSize / chunkSize);
+  const fileSize   = fs.statSync(videoPath).size;
+  // Fixed 10 MB chunks — safely within TikTok's 5 MB–64 MB required range.
+  // Using a variable chunk size (e.g. Math.min(file, 64MB)) makes total_chunk_count
+  // ambiguous for files close to the boundary and causes "invalid chunk count" errors.
+  const CHUNK_SIZE  = 10 * 1024 * 1024;
+  const chunkSize   = Math.min(fileSize, CHUNK_SIZE); // single-part for files < 10 MB
+  const totalChunks = Math.ceil(fileSize / CHUNK_SIZE);
 
   let init;
   try {
@@ -286,12 +288,12 @@ async function uploadToTikTok(videoPath, title, account) {
   const uploadUrl = init.data?.upload_url;
   if (!uploadUrl) throw new Error("TikTok: no upload_url returned: " + JSON.stringify(init));
 
-  // Upload in chunks — reads 64 MB at a time so large files don't fill RAM
+  // Upload in 10 MB chunks — reads one chunk at a time, never buffers full file in RAM
   const fd = fs.openSync(videoPath, "r");
   try {
     for (let i = 0; i < totalChunks; i++) {
-      const start         = i * chunkSize;
-      const thisChunk     = Math.min(chunkSize, fileSize - start);
+      const start         = i * CHUNK_SIZE;
+      const thisChunk     = Math.min(CHUNK_SIZE, fileSize - start);
       const end           = start + thisChunk - 1;
       const buf           = Buffer.allocUnsafe(thisChunk);
       fs.readSync(fd, buf, 0, thisChunk, start);

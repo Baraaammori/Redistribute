@@ -100,13 +100,24 @@ async function refreshTikTokToken(account) {
       );
     }
 
+    const expiresIn = data.expires_in || 86400;
     const updates = {
       access_token:  data.access_token,
       refresh_token: data.refresh_token || account.refresh_token,
-      expires_at:    new Date(Date.now() + (data.expires_in || 86400) * 1000),
+      expires_at:    new Date(Date.now() + expiresIn * 1000).toISOString(),
       error_message: null,
     };
-    await supabase.from("platform_accounts").update(updates).eq("id", account.id);
+
+    const { error: saveError } = await supabase
+      .from("platform_accounts")
+      .update(updates)
+      .eq("id", account.id);
+
+    if (saveError) {
+      console.error(`[tokenRefresh] ❌ FAILED to save TikTok token for account ${account.id}: ${saveError.message}`);
+    } else {
+      console.log(`[tokenRefresh] ✅ TikTok token saved | account=${account.id} | expires_in=${expiresIn}s`);
+    }
 
     Object.assign(account, updates);
     return account;
