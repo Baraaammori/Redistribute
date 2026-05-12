@@ -11,6 +11,7 @@ const os                = require("os");
 const { v4: uuidv4 }    = require("uuid");
 const supabase          = require("../lib/supabase");
 const { uploadFile, cleanupTemp, cleanupTempDir } = require("../lib/storage");
+const axios = require("axios");
 const connection        = require("../lib/redis");
 
 const autoCutQueue = new Queue("auto-cut", { connection });
@@ -31,11 +32,21 @@ if (process.env.DISABLE_WORKERS !== "true") {
     try {
       fs.mkdirSync(tmpDir, { recursive: true });
 
-      // Step 1: Get duration via ffprobe — reads URL directly, no download needed
+      // Step 1: probe duration directly from R2 URL (ffprobe only reads headers — no full download)
       const sourceUrl = video.file_url;
       console.log(`${label} Probing duration from R2…`);
       const duration = await getVideoDuration(sourceUrl);
       console.log(`${label} Duration: ${duration.toFixed(1)}s`);
+
+      // Step 2: stream source to /tmp ONCE — never pass an HTTP URL to FFmpeg.
+      // When FFmpeg reads a 16 Mbps OBS recording from HTTP it buffers large
+      // chunks in RAM to satisfy container seeks, causing OOM (exit 255).
+      // Streaming to disk first is zero-RAM; disk is cleaned up in finally.
+      const sourceLocalPath = path.join(tmpDir, "source.mp4");
+      console.log(`${label} Streaming source to disk: ${sourceLocalPath}…`);
+      await streamToDisk(sourceUrl, sourceLocalPath);
+      const sourceMB = (fs.statSync(sourceLocalPath).size / 1e6).toFixed(1);
+      console.log(`${label} Source ready on disk: ${sourceMB} MB`);
 
       const totalClips = Math.ceil(duration / clipLengthSeconds);
       console.log(`${label} Will create ${totalClips} clips of ${clipLengthSeconds}s each`);
@@ -53,7 +64,7 @@ if (process.env.DISABLE_WORKERS !== "true") {
         const clipPath = path.join(tmpDir, `clip_${n}.mp4`);
 
         try {
-          await cutClip(sourceUrl, clipPath, start, end);
+          await cutClip(sourceLocalPath, clipPath, start, end);
           console.log(`${label} ✅ Clip ${n} cut → ${clipPath}`);
 
           // Upload clip to Supabase Storage
@@ -202,7 +213,14 @@ function cutClip(inputPath, outputPath, startSeconds, endSeconds) {
         return resolve(outputPath);
       }
 
-      // Non-zero exit — find the first error-looking line in stderr
+      if (exitCode === 255 || exitCode === null) {
+        return reject(new Error(
+          "FFmpeg was killed by the OS (exit 255) — likely OOM or SIGKILL. " +
+          "Ensure the source video is downloaded to disk before cutting."
+        ));
+      }
+
+      // Any other non-zero exit — find the first error-looking line in stderr
       const fullStderr = stderrChunks.join("");
       const errorLine = fullStderr
         .split(/[\r\n]+/)
@@ -218,5 +236,23 @@ function cutClip(inputPath, outputPath, startSeconds, endSeconds) {
       proc.kill("SIGKILL");
       reject(new Error("FFmpeg timed out after 120s"));
     }, 120_000);
+  });
+}
+
+// ── Stream a URL to a local file — zero RAM, all disk ─────────────────────────
+function streamToDisk(url, destPath) {
+  return new Promise((resolve, reject) => {
+    axios({ url, method: "GET", responseType: "stream" })
+      .then(res => {
+        if (res.status < 200 || res.status >= 300) {
+          return reject(new Error(`Download failed: HTTP ${res.status} for ${url}`));
+        }
+        const writer = fs.createWriteStream(destPath);
+        res.data.pipe(writer);
+        writer.on("finish", resolve);
+        writer.on("error", reject);
+        res.data.on("error", reject);
+      })
+      .catch(reject);
   });
 }
