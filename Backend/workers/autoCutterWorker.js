@@ -71,8 +71,11 @@ if (process.env.DISABLE_WORKERS !== "true") {
           const clipStoragePath = `${userId}/${videoId}/autocut_clip_${n}_${uuidv4()}.mp4`;
           const { url: clipUrl, path: storagePath } = await uploadFile(clipPath, clipStoragePath, "video/mp4");
 
-          // Save clip row to DB
-          const { data: clip } = await supabase.from("clips").insert({
+          const clipTitle = `${video.title || "Video"} — Part ${n + 1}`;
+
+          // Save clip row to DB (best-effort — a missing/broken clips table must not
+          // block the repost queue; we log the error and continue regardless)
+          const { data: clip, error: clipInsertErr } = await supabase.from("clips").insert({
             video_id:         videoId,
             user_id:          userId,
             file_url:         clipUrl,
@@ -82,41 +85,46 @@ if (process.env.DISABLE_WORKERS !== "true") {
             duration_seconds: Math.round(end - start),
             width:            video.width,
             height:           video.height,
-            title:            `${video.title || "Video"} — Part ${n + 1}`,
+            title:            clipTitle,
             platform:         targetPlatforms[0] || "tiktok",
             status:           "generated",
           }).select().single();
 
-          let repostId = null;
-          if (clip) {
-            // Feed clip into the existing repost queue
-            const { repostQueue } = require("../routes/reposts");
-            const { data: repost } = await supabase.from("reposts").insert({
-              user_id:          userId,
-              source_video_url: clipUrl,
-              source_platform:  "library",
-              title:            clip.title,
-              destinations:     targetPlatforms,
-              status:           "pending",
-            }).select().single();
-
-            if (repost) {
-              const queueJob = await repostQueue.add(
-                "repost",
-                { repostId: repost.id },
-                { attempts: 3, backoff: { type: "exponential", delay: 5000 } }
-              );
-              await supabase.from("reposts").update({ job_id: queueJob.id }).eq("id", repost.id);
-              repostId = repost.id;
-            }
-
-            createdClips.push({
-              clipId:   clip.id,
-              title:    clip.title,
-              duration: Math.round(end - start),
-              repostId,
-            });
+          if (clipInsertErr) {
+            console.error(`${label} clips table insert failed (non-fatal): ${clipInsertErr.message}`);
           }
+
+          // Queue the repost unconditionally — we only need clipUrl, not the clip row
+          let repostId = null;
+          const { repostQueue } = require("../routes/reposts");
+          const { data: repost, error: repostInsertErr } = await supabase.from("reposts").insert({
+            user_id:          userId,
+            source_video_url: clipUrl,
+            source_platform:  "library",
+            title:            clip?.title || clipTitle,
+            destinations:     targetPlatforms,
+            status:           "pending",
+          }).select().single();
+
+          if (repostInsertErr) {
+            console.error(`${label} reposts insert failed: ${repostInsertErr.message}`);
+          } else if (repost) {
+            const queueJob = await repostQueue.add(
+              "repost",
+              { repostId: repost.id },
+              { attempts: 3, backoff: { type: "exponential", delay: 5000 } }
+            );
+            await supabase.from("reposts").update({ job_id: queueJob.id }).eq("id", repost.id);
+            repostId = repost.id;
+            console.log(`${label} 📤 Clip ${n} queued as repost ${repost.id}`);
+          }
+
+          createdClips.push({
+            clipId:   clip?.id || null,
+            title:    clip?.title || clipTitle,
+            duration: Math.round(end - start),
+            repostId,
+          });
 
           cleanupTemp(clipPath);
         } catch (clipErr) {
