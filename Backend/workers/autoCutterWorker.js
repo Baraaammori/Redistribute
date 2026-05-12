@@ -10,7 +10,7 @@ const path              = require("path");
 const os                = require("os");
 const { v4: uuidv4 }    = require("uuid");
 const supabase          = require("../lib/supabase");
-const { downloadToTemp, uploadFile, cleanupTemp, cleanupTempDir } = require("../lib/storage");
+const { uploadFile, cleanupTemp, cleanupTempDir } = require("../lib/storage");
 const connection        = require("../lib/redis");
 
 const autoCutQueue = new Queue("auto-cut", { connection });
@@ -27,17 +27,14 @@ if (process.env.DISABLE_WORKERS !== "true") {
     if (!video) throw new Error("Video not found");
 
     const tmpDir = path.join(os.tmpdir(), `autocut_${videoId}_${Date.now()}`);
-    let sourcePath = null;
 
     try {
       fs.mkdirSync(tmpDir, { recursive: true });
 
-      // Step 1: Download source video to disk
-      console.log(`${label} Downloading video…`);
-      sourcePath = await downloadToTemp(video.file_url, `autocut_src_${videoId}.mp4`);
-
-      // Step 2: Get duration via ffprobe
-      const duration = await getVideoDuration(sourcePath);
+      // Step 1: Get duration via ffprobe — reads URL directly, no download needed
+      const sourceUrl = video.file_url;
+      console.log(`${label} Probing duration from R2…`);
+      const duration = await getVideoDuration(sourceUrl);
       console.log(`${label} Duration: ${duration.toFixed(1)}s`);
 
       const totalClips = Math.ceil(duration / clipLengthSeconds);
@@ -54,7 +51,7 @@ if (process.env.DISABLE_WORKERS !== "true") {
         const clipPath = path.join(tmpDir, `clip_${n}.mp4`);
 
         try {
-          await cutClip(sourcePath, clipPath, start, end);
+          await cutClip(sourceUrl, clipPath, start, end);
 
           // Upload clip to Supabase Storage
           const clipStoragePath = `${userId}/${videoId}/autocut_clip_${n}_${uuidv4()}.mp4`;
@@ -139,7 +136,6 @@ if (process.env.DISABLE_WORKERS !== "true") {
       console.log(`✅ ${label} Done — ${createdClips.length}/${totalClips} clips created and queued`);
 
     } finally {
-      if (sourcePath) cleanupTemp(sourcePath);
       cleanupTempDir(tmpDir);
     }
   }, {
