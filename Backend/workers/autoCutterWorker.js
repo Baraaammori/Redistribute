@@ -180,14 +180,23 @@ function cutClip(inputPath, outputPath, startSeconds, endSeconds) {
       outputPath,
     ], { timeout: 120_000 }, (err, _, stderr) => {
       if (err) {
-        // FFmpeg writes progress lines to stderr (\rframe= fps= …) — filter them out
-        // to surface the actual error line instead of the last progress update.
-        const errorLines = (stderr || "")
-          .split(/[\r\n]+/)
-          .filter(l => l.trim() && !/^(frame=|size=|encoded |video:|audio:)/.test(l) && !/fps=|bitrate=|speed=/.test(l))
-          .slice(-5)
+        // Always dump full stderr to Railway logs so the actual error is visible
+        console.error(`[auto-cut] FFmpeg stderr (exit ${err.code}):\n${stderr}`);
+        // Build a short summary by stripping known-informational lines
+        const cleaned = (stderr || "")
+          .replace(/\r(?!\n)/g, "\n")
+          .split("\n")
+          .map(l => l.trim())
+          .filter(l => {
+            if (!l) return false;
+            if (/^frame=|^size=/.test(l) || /fps=\d.*speed=/.test(l)) return false;
+            if (/^(Press \[q\]|Stream mapping:|  Stream #\d|Output #\d,|Input #\d,)/.test(l)) return false;
+            if (/^\s*(vendor_id|handler_name|encoder|major_brand|compatible_brands|creation_time|Duration:)\s*[=:]/.test(l)) return false;
+            return true;
+          })
+          .slice(-8)
           .join(" | ");
-        return reject(new Error("FFmpeg cut failed: " + (errorLines || (stderr || "").slice(-300))));
+        return reject(new Error(`FFmpeg failed (exit ${err.code}): ${cleaned || (stderr || "").slice(-500)}`));
       }
       if (!fs.existsSync(outputPath)) return reject(new Error("Clip file not created"));
       resolve(outputPath);
