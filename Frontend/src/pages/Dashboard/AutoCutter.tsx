@@ -118,13 +118,16 @@ export default function AutoCutter() {
           if (status.state === "completed" || status.progress?.phase === "done") {
             clearInterval(pollRef.current!);
             setPhase("done");
-          }
-          if (status.state === "failed") {
+          } else if (status.state === "failed") {
             clearInterval(pollRef.current!);
-            setError("Job failed — check the Queue page for details.");
+            setError(status.progress?.error || "Job failed — check logs for details.");
             setPhase("config");
+          } else if (status.state === "waiting") {
+            setProgress((p: any) => ({ ...p, _state: "waiting" }));
           }
-        } catch {}
+        } catch (err: any) {
+          setError("Lost connection to server — retrying...");
+        }
       }, 3000);
     } catch (err: any) {
       setError(err.message || "Failed to start auto-cut");
@@ -159,7 +162,13 @@ export default function AutoCutter() {
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
               <Loader2 size={16} color="#9B7EFF" style={{ animation: "spin 1s linear infinite", flexShrink: 0 }} />
               <span style={{ fontSize: 14, fontWeight: 600, color: "#9B7EFF" }}>
-                {total > 0 ? `Cutting clip ${current} of ${total}…` : "Preparing…"}
+                {progress._state === "waiting"
+                  ? "In queue, waiting to start…"
+                  : progress.phase === "cutting" && total > 0
+                    ? `Cutting clip ${current} of ${total}…`
+                    : progress.phase === "done"
+                      ? "Finalising…"
+                      : "Preparing…"}
               </span>
             </div>
             <div style={{ background: "rgba(255,255,255,0.06)", borderRadius: 100, height: 6, marginBottom: 6 }}>

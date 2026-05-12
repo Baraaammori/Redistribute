@@ -24,8 +24,12 @@ class VideoDownloader {
   }
 
   _getBinPath() {
+    // YT_DLP_PATH env var wins — set to "yt-dlp" on Railway (system PATH via Nixpacks)
+    if (process.env.YT_DLP_PATH) return process.env.YT_DLP_PATH;
     const filename = os.platform() === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
-    return path.join(__dirname, '..', 'bin', filename);
+    const localBin = path.join(__dirname, '..', 'bin', filename);
+    // Fall back to system PATH if the local binary doesn't exist
+    return fs.existsSync(localBin) ? localBin : filename;
   }
 
   _getNextProxy() {
@@ -120,8 +124,11 @@ class VideoDownloader {
    * (transient 429/503) should trigger retries.
    */
   async download(url, id) {
-    if (!fs.existsSync(this.binPath)) {
-      throw new Error(`yt-dlp binary not found at ${this.binPath}`);
+    if (!fs.existsSync(this.binPath) && path.isAbsolute(this.binPath)) {
+      throw new UnrecoverableError(
+        `yt-dlp binary not found at ${this.binPath}. ` +
+        `Set YT_DLP_PATH=yt-dlp in Railway env vars and ensure nixpacks.toml includes yt-dlp.`
+      );
     }
 
     const dest = path.join(os.tmpdir(), `redistribute_${id}_ytdlp.mp4`);

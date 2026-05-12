@@ -175,10 +175,34 @@ async function runPollCycle() {
       // New video found!
       console.log(`[autoRepublish] New video on ${acc.platform} for account ${acc.id}: ${latest.id}`);
 
-      await supabase.from("platform_accounts").update({
+      // Dedup guard — skip if a job for this exact video was already created in the last 24h
+      const { data: existingJob } = await supabase
+        .from("auto_republish_jobs")
+        .select("id")
+        .eq("source_video_id", latest.id)
+        .eq("user_id", acc.user_id)
+        .gte("created_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+        .maybeSingle();
+
+      if (existingJob) {
+        console.warn(`[autoRepublish] Skipping duplicate — video ${latest.id} already queued (job ${existingJob.id})`);
+        await supabase.from("platform_accounts").update({
+          ...pollUpdate,
+          last_seen_video_id: latest.id,
+        }).eq("id", acc.id);
+        continue;
+      }
+
+      // Save last_seen_video_id BEFORE enqueueing so a queuing failure never causes re-detection
+      const { error: updateErr } = await supabase.from("platform_accounts").update({
         ...pollUpdate,
         last_seen_video_id: latest.id,
       }).eq("id", acc.id);
+      if (updateErr) {
+        console.error(`[autoRepublish] FAILED to save last_seen_video_id for account ${acc.id}: ${updateErr.message}`);
+      } else {
+        console.log(`[autoRepublish] Saved last_seen_video_id=${latest.id} for account ${acc.id}`);
+      }
 
       // Create an auto_republish_jobs row
       const { data: autoJob, error: jobErr } = await supabase.from("auto_republish_jobs").insert({

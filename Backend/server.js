@@ -11,6 +11,17 @@ if (missingStripe.length) {
 
 const app = express();
 
+// ── BINARY STARTUP CHECKS ─────────────────────────────────────────────────────
+const { existsSync } = require("fs");
+const { execSync }   = require("child_process");
+
+const ytDlpPath = process.env.YT_DLP_PATH || require("path").join(__dirname, "bin", process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp");
+const ytDlpOk = existsSync(ytDlpPath) || (() => { try { execSync(`${ytDlpPath} --version`, { stdio: "ignore" }); return true; } catch { return false; } })();
+console.log(`[yt-dlp]    ${ytDlpOk ? `✓ found at ${ytDlpPath}` : `🚨 NOT FOUND at ${ytDlpPath} — repost jobs will fail. Set YT_DLP_PATH=yt-dlp and add yt-dlp to nixpacks.toml`}`);
+
+try { execSync("ffmpeg -version", { stdio: "ignore" }); console.log("[ffmpeg]    ✓ found"); }
+catch { console.error("[ffmpeg]    🚨 NOT FOUND — auto-cutter and captions will fail"); }
+
 // ── PLATFORM CREDENTIAL STARTUP HEALTH CHECK ──────────────────────────────────
 const ytOk = !!(process.env.YOUTUBE_CLIENT_ID && process.env.YOUTUBE_CLIENT_SECRET);
 const ttOk = !!(process.env.TIKTOK_CLIENT_KEY && process.env.TIKTOK_CLIENT_SECRET);
@@ -83,6 +94,7 @@ app.use("/api/shop",           safeRequire("./routes/shop"));
 
 // ── WORKERS & POLLERS ─────────────────────────────────────────────────────────
 try { require("./lib/distributionWorker"); }   catch (e) { console.error("[distributionWorker] failed to load:", e.message); }
+try { require("./workers/autoCutterWorker"); } catch (e) { console.error("[autoCutterWorker] failed to load:", e.message); }
 
 try {
   const { startAnalyticsPoller }     = require("./lib/analyticsPoller");

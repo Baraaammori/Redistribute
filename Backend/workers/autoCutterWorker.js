@@ -179,7 +179,16 @@ function cutClip(inputPath, outputPath, startSeconds, endSeconds) {
       "-avoid_negative_ts", "make_zero",
       outputPath,
     ], { timeout: 120_000 }, (err, _, stderr) => {
-      if (err) return reject(new Error("FFmpeg cut failed: " + (stderr || "").slice(-200)));
+      if (err) {
+        // FFmpeg writes progress lines to stderr (\rframe= fps= …) — filter them out
+        // to surface the actual error line instead of the last progress update.
+        const errorLines = (stderr || "")
+          .split(/[\r\n]+/)
+          .filter(l => l.trim() && !/^(frame=|size=|encoded |video:|audio:)/.test(l) && !/fps=|bitrate=|speed=/.test(l))
+          .slice(-5)
+          .join(" | ");
+        return reject(new Error("FFmpeg cut failed: " + (errorLines || (stderr || "").slice(-300))));
+      }
       if (!fs.existsSync(outputPath)) return reject(new Error("Clip file not created"));
       resolve(outputPath);
     });
