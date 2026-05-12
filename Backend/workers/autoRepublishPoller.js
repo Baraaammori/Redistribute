@@ -24,24 +24,35 @@ async function fetchLatestYouTubeVideo(account) {
   auth.setCredentials({ access_token: account.access_token, refresh_token: account.refresh_token });
   const yt = google.youtube({ version: "v3", auth });
 
-  // Get the channel ID from the account handle (stored during OAuth)
-  const channelsRes = await yt.channels.list({ part: ["id"], mine: true });
-  const channelId = channelsRes.data.items?.[0]?.id;
-  if (!channelId) return null;
+  // Use cached uploads playlist ID if available (saves 1 unit per poll)
+  let uploadsPlaylistId = account.uploads_playlist_id;
 
-  const res = await yt.search.list({
-    part:      ["snippet"],
-    channelId,
+  if (!uploadsPlaylistId) {
+    // channels.list costs 1 unit — fetch once and cache
+    const channelsRes = await yt.channels.list({ part: ["contentDetails"], mine: true });
+    uploadsPlaylistId = channelsRes.data.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
+    if (!uploadsPlaylistId) return null;
+
+    // Cache it so future polls skip this call
+    await supabase.from("platform_accounts")
+      .update({ uploads_playlist_id: uploadsPlaylistId })
+      .eq("id", account.id);
+  }
+
+  // playlistItems.list costs 1 unit — vs search.list which costs 100 units
+  const res = await yt.playlistItems.list({
+    part:       ["snippet"],
+    playlistId: uploadsPlaylistId,
     maxResults: 1,
-    order:      "date",
-    type:       ["video"],
   });
   const item = res.data.items?.[0];
   if (!item) return null;
+  const videoId = item.snippet?.resourceId?.videoId;
+  if (!videoId) return null;
   return {
-    id:    item.id.videoId,
+    id:    videoId,
     title: item.snippet.title,
-    url:   `https://www.youtube.com/watch?v=${item.id.videoId}`,
+    url:   `https://www.youtube.com/watch?v=${videoId}`,
   };
 }
 
@@ -251,17 +262,24 @@ function startAutoRepublishPoller() {
     return;
   }
 
-  // Register the repeatable job (runs every 10 minutes)
-  pollQueue.add(
-    "poll",
-    {},
-    {
-      repeat:   { cron: "*/10 * * * *" },
-      jobId:    "auto-republish-poller",
-      removeOnComplete: { count: 5 },
-      removeOnFail:     { count: 10 },
+  // Remove ALL existing "poll" job schedulers (stale crons from prior deploys)
+  // then register fresh — otherwise Redis runs both the old and new schedule simultaneously
+  pollQueue.getJobSchedulers().then(async schedulers => {
+    for (const s of schedulers) {
+      if (s.name === "poll") {
+        await pollQueue.removeJobScheduler(s.id);
+        console.log(`[autoRepublish] Removed stale job scheduler: ${s.id}`);
+      }
     }
-  ).then(() => {
+    return pollQueue.upsertJobScheduler(
+      "auto-republish-poller",
+      { pattern: "*/10 * * * *" },
+      {
+        name:             "poll",
+        opts:             { removeOnComplete: { count: 5 }, removeOnFail: { count: 10 } },
+      }
+    );
+  }).then(() => {
     console.log("✅ [autoRepublish] Poller scheduled (every 10 min)");
   }).catch(err => {
     console.error("❌ [autoRepublish] Failed to schedule poller:", err.message);
