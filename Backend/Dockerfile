@@ -1,5 +1,4 @@
-# Use a Node image
-FROM node:18-slim
+FROM node:20-slim
 
 # Install FFmpeg (crucial for video project)
 RUN apt-get update && apt-get install -y ffmpeg python3 python3-pip && rm -rf /var/lib/apt/lists/*
@@ -11,15 +10,12 @@ WORKDIR /app
 
 # Copy package files and install
 COPY package*.json ./
-RUN npm install --ignore-scripts
+RUN npm install
 
 # Copy rest of the code
 COPY . .
 
-# Run postinstall after scripts are copied
-RUN npm run postinstall
-
-# IMPORTANT: Hugging Face uses port 7860 by default
+# IMPORTANT: Hugging Face/Railway uses port 7860 or PORT env
 ENV PORT=7860
 EXPOSE 7860
 
