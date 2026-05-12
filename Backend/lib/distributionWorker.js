@@ -95,9 +95,20 @@ async function uploadToTikTok(videoPath, title, account) {
     account = await refreshTikTokToken(account);
   }
 
-  const stat = fs.statSync(videoPath);
+  const fileSize  = fs.statSync(videoPath).size;
+  const MAX_CHUNK = 64 * 1024 * 1024;
+  const chunkSize    = Math.min(fileSize, MAX_CHUNK);
+  const totalChunks  = Math.ceil(fileSize / chunkSize);
 
-  console.log(`📤 TikTok upload: file size ${stat.size}, title: "${title}"`);
+  console.log(`📤 [dist] TikTok upload: ${(fileSize / 1e6).toFixed(1)} MB in ${totalChunks} chunk(s), title: "${title}"`);
+
+  // Validate MP4 ftyp box (read first 12 bytes only)
+  const hdrBuf  = Buffer.alloc(12);
+  const hdrFd   = fs.openSync(videoPath, "r");
+  fs.readSync(hdrFd, hdrBuf, 0, 12, 0);
+  fs.closeSync(hdrFd);
+  const hasFtyp = hdrBuf.subarray(4, 8).toString("ascii") === "ftyp";
+  if (!hasFtyp) console.warn("⚠️ [dist] ftyp box not found at offset 4 — file may not be valid MP4");
 
   let init;
   try {
@@ -112,10 +123,10 @@ async function uploadToTikTok(videoPath, title, account) {
           disable_comment: false,
         },
         source_info: {
-          source: "FILE_UPLOAD",
-          video_size: stat.size,
-          chunk_size: stat.size,
-          total_chunk_count: 1,
+          source:            "FILE_UPLOAD",
+          video_size:        fileSize,
+          chunk_size:        chunkSize,
+          total_chunk_count: totalChunks,
         },
       },
       {
@@ -126,13 +137,12 @@ async function uploadToTikTok(videoPath, title, account) {
       }
     );
     init = resp.data;
-    console.log("✅ TikTok init response:", JSON.stringify(init));
+    console.log("✅ [dist] TikTok init response:", JSON.stringify(init));
   } catch (err) {
     const status = err.response?.status;
     const body = err.response?.data || {};
     const errorCode = body?.error?.code || body?.data?.error_code || "";
 
-    // Classify error for frontend to act on correctly
     if (status === 403 && errorCode === "unaudited_client_can_only_post_to_private_accounts") {
       const e = new Error("TIKTOK_APP_NOT_AUDITED");
       e.tiktokCode = errorCode;
@@ -153,44 +163,44 @@ async function uploadToTikTok(videoPath, title, account) {
     }
 
     const errorDetails = body ? JSON.stringify(body) : err.message;
-    console.error("❌ TikTok init error:", errorDetails);
+    console.error("❌ [dist] TikTok init error:", errorDetails);
     throw new Error("TikTok API Error: " + errorDetails);
   }
 
   const uploadUrl = init.data?.upload_url;
   if (!uploadUrl) throw new Error("TikTok did not return an upload_url: " + JSON.stringify(init));
 
-  const buffer = fs.readFileSync(videoPath);
-  const fileSize = buffer.length;
-
-  // Validate MP4 signature (first 4+ bytes should contain 'ftyp')
-  const header = buffer.slice(0, 12).toString('hex');
-  const hasFtyp = buffer.slice(4, 8).toString('ascii') === 'ftyp';
-  console.log(`📤 [dist] Uploading ${fileSize} bytes | MP4 ftyp: ${hasFtyp} | header: ${header.slice(0, 24)}`);
-  if (!hasFtyp) {
-    console.warn('⚠️ [dist] File does not appear to be a valid MP4 — ftyp box not found at offset 4');
-  }
-
+  const fd = fs.openSync(videoPath, "r");
   try {
-    await axios.put(uploadUrl, buffer, {
-      headers: {
-        'Content-Type': 'video/mp4',
-        'Content-Length': fileSize,
-        'Content-Range': `bytes 0-${fileSize - 1}/${fileSize}`,
-      },
-      maxBodyLength: Infinity,
-      maxContentLength: Infinity,
-      // Prevent Axios from transforming the raw binary buffer
-      transformRequest: [(data) => data],
-    });
-    console.log('✅ [dist] TikTok upload complete!');
+    for (let i = 0; i < totalChunks; i++) {
+      const start      = i * chunkSize;
+      const thisChunk  = Math.min(chunkSize, fileSize - start);
+      const end        = start + thisChunk - 1;
+      const buf        = Buffer.allocUnsafe(thisChunk);
+      fs.readSync(fd, buf, 0, thisChunk, start);
+
+      await axios.put(uploadUrl, buf, {
+        headers: {
+          "Content-Type":   "video/mp4",
+          "Content-Length": thisChunk,
+          "Content-Range":  `bytes ${start}-${end}/${fileSize}`,
+        },
+        maxBodyLength:    Infinity,
+        maxContentLength: Infinity,
+        transformRequest: [(d) => d],
+      });
+      console.log(`✅ [dist] TikTok chunk ${i + 1}/${totalChunks} uploaded (${(thisChunk / 1e6).toFixed(1)} MB)`);
+    }
   } catch (err) {
     const errorDetails = err.response?.data ? JSON.stringify(err.response.data) : err.message;
     const status = err.response?.status;
-    console.error(`❌ [dist] TikTok file upload error [${status}]:`, errorDetails);
+    console.error(`❌ [dist] TikTok upload error [${status}]:`, errorDetails);
     throw new Error(`TikTok Upload Error [${status}]: ${errorDetails}`);
+  } finally {
+    fs.closeSync(fd);
   }
 
+  console.log("✅ [dist] TikTok upload complete");
   return {
     platform_video_id: init.data?.publish_id || null,
     platform_url: null,

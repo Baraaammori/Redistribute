@@ -230,7 +230,12 @@ async function uploadToYouTube(videoPath, title, account) {
 }
 
 async function uploadToTikTok(videoPath, title, account) {
-  const stat = fs.statSync(videoPath);
+  const fileSize  = fs.statSync(videoPath).size;
+  // TikTok: chunk_size must be 5 MB–64 MB (except the final chunk which can be smaller)
+  const MAX_CHUNK = 64 * 1024 * 1024;
+  const chunkSize    = Math.min(fileSize, MAX_CHUNK);
+  const totalChunks  = Math.ceil(fileSize / chunkSize);
+
   let init;
   try {
     const resp = await axios.post(
@@ -245,9 +250,9 @@ async function uploadToTikTok(videoPath, title, account) {
         },
         source_info: {
           source:            "FILE_UPLOAD",
-          video_size:        stat.size,
-          chunk_size:        stat.size,
-          total_chunk_count: 1,
+          video_size:        fileSize,
+          chunk_size:        chunkSize,
+          total_chunk_count: totalChunks,
         },
       },
       {
@@ -277,19 +282,33 @@ async function uploadToTikTok(videoPath, title, account) {
   const uploadUrl = init.data?.upload_url;
   if (!uploadUrl) throw new Error("TikTok: no upload_url returned: " + JSON.stringify(init));
 
-  const buffer   = fs.readFileSync(videoPath);
-  const fileSize = buffer.length;
-  await axios.put(uploadUrl, buffer, {
-    headers: {
-      "Content-Type":  "video/mp4",
-      "Content-Length": fileSize,
-      "Content-Range": `bytes 0-${fileSize - 1}/${fileSize}`,
-    },
-    maxBodyLength: Infinity,
-    maxContentLength: Infinity,
-    transformRequest: [(d) => d],
-  });
-  console.log("✅ [tiktok] Upload complete");
+  // Upload in chunks — reads 64 MB at a time so large files don't fill RAM
+  const fd = fs.openSync(videoPath, "r");
+  try {
+    for (let i = 0; i < totalChunks; i++) {
+      const start         = i * chunkSize;
+      const thisChunk     = Math.min(chunkSize, fileSize - start);
+      const end           = start + thisChunk - 1;
+      const buf           = Buffer.allocUnsafe(thisChunk);
+      fs.readSync(fd, buf, 0, thisChunk, start);
+
+      await axios.put(uploadUrl, buf, {
+        headers: {
+          "Content-Type":   "video/mp4",
+          "Content-Length": thisChunk,
+          "Content-Range":  `bytes ${start}-${end}/${fileSize}`,
+        },
+        maxBodyLength:    Infinity,
+        maxContentLength: Infinity,
+        transformRequest: [(d) => d],
+      });
+      console.log(`✅ [tiktok] Chunk ${i + 1}/${totalChunks} uploaded (${(thisChunk / 1e6).toFixed(1)} MB)`);
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  console.log("✅ [tiktok] All chunks uploaded");
+  return { platform_video_id: init.data?.publish_id || null, platform_url: null };
 }
 
 async function uploadToInstagram(videoPath, title, userId, account) {
