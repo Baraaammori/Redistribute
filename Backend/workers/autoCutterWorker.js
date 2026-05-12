@@ -4,7 +4,7 @@
 // clip to Supabase Storage, and queues each clip as a repost job.
 // ─────────────────────────────────────────────────────────────────────────────
 const { Worker, Queue } = require("bullmq");
-const { execFile }      = require("child_process");
+const { execFile, spawn } = require("child_process");
 const fs                = require("fs");
 const path              = require("path");
 const os                = require("os");
@@ -45,6 +45,8 @@ if (process.env.DISABLE_WORKERS !== "true") {
       const createdClips = [];
 
       // Step 3: Cut each clip with stream copy — no re-encode, minimal RAM
+      let failedClips = 0;
+
       for (let n = 0; n < totalClips; n++) {
         const start = n * clipLengthSeconds;
         const end   = Math.min((n + 1) * clipLengthSeconds, duration);
@@ -52,6 +54,7 @@ if (process.env.DISABLE_WORKERS !== "true") {
 
         try {
           await cutClip(sourceUrl, clipPath, start, end);
+          console.log(`${label} ✅ Clip ${n} cut → ${clipPath}`);
 
           // Upload clip to Supabase Storage
           const clipStoragePath = `${userId}/${videoId}/autocut_clip_${n}_${uuidv4()}.mp4`;
@@ -106,7 +109,8 @@ if (process.env.DISABLE_WORKERS !== "true") {
 
           cleanupTemp(clipPath);
         } catch (clipErr) {
-          console.error(`${label} Clip ${n} failed (skipping): ${clipErr.message}`);
+          failedClips++;
+          console.error(`${label} ❌ Clip ${n} failed (skipping): ${clipErr.message}`);
           cleanupTemp(clipPath);
         }
 
@@ -116,6 +120,10 @@ if (process.env.DISABLE_WORKERS !== "true") {
           total:   totalClips,
           clips:   createdClips,
         });
+      }
+
+      if (failedClips === totalClips) {
+        throw new Error(`All ${totalClips} clips failed — check FFmpeg and the source video URL`);
       }
 
       await job.updateProgress({
@@ -167,39 +175,48 @@ function getVideoDuration(videoPath) {
   });
 }
 
-// ── ffmpeg: stream-copy cut (no re-encode, ~50MB RAM regardless of video size) ─
+// ── ffmpeg: stream-copy cut ────────────────────────────────────────────────────
+// Uses spawn so stderr is collected without ever triggering a reject.
+// The Promise resolves/rejects ONLY on process exit code.
 function cutClip(inputPath, outputPath, startSeconds, endSeconds) {
   return new Promise((resolve, reject) => {
-    execFile("ffmpeg", [
-      "-y",
+    const proc = spawn("ffmpeg", [
       "-ss", String(startSeconds),
       "-to", String(endSeconds),
-      "-i", inputPath,
-      "-c", "copy",
+      "-i",  inputPath,
+      "-c",  "copy",
       "-avoid_negative_ts", "make_zero",
+      "-movflags", "+faststart",
+      "-y",
       outputPath,
-    ], { timeout: 120_000 }, (err, _, stderr) => {
-      if (err) {
-        // Always dump full stderr to Railway logs so the actual error is visible
-        console.error(`[auto-cut] FFmpeg stderr (exit ${err.code}):\n${stderr}`);
-        // Build a short summary by stripping known-informational lines
-        const cleaned = (stderr || "")
-          .replace(/\r(?!\n)/g, "\n")
-          .split("\n")
-          .map(l => l.trim())
-          .filter(l => {
-            if (!l) return false;
-            if (/^frame=|^size=/.test(l) || /fps=\d.*speed=/.test(l)) return false;
-            if (/^(Press \[q\]|Stream mapping:|  Stream #\d|Output #\d,|Input #\d,)/.test(l)) return false;
-            if (/^\s*(vendor_id|handler_name|encoder|major_brand|compatible_brands|creation_time|Duration:)\s*[=:]/.test(l)) return false;
-            return true;
-          })
-          .slice(-8)
-          .join(" | ");
-        return reject(new Error(`FFmpeg failed (exit ${err.code}): ${cleaned || (stderr || "").slice(-500)}`));
+    ]);
+
+    const stderrChunks = [];
+    proc.stderr.on("data", chunk => stderrChunks.push(chunk.toString()));
+
+    proc.on("close", exitCode => {
+      if (exitCode === 0) {
+        if (!fs.existsSync(outputPath)) {
+          return reject(new Error("FFmpeg exited 0 but output file missing"));
+        }
+        return resolve(outputPath);
       }
-      if (!fs.existsSync(outputPath)) return reject(new Error("Clip file not created"));
-      resolve(outputPath);
+
+      // Non-zero exit — find the first error-looking line in stderr
+      const fullStderr = stderrChunks.join("");
+      const errorLine = fullStderr
+        .split(/[\r\n]+/)
+        .find(l => /error|invalid|no such|failed|unable|moov/i.test(l))
+        || fullStderr.slice(-300);
+      reject(new Error(`FFmpeg exited ${exitCode}: ${errorLine.trim()}`));
     });
+
+    proc.on("error", err => reject(new Error("FFmpeg spawn error: " + err.message)));
+
+    // Kill if it runs too long
+    setTimeout(() => {
+      proc.kill("SIGKILL");
+      reject(new Error("FFmpeg timed out after 120s"));
+    }, 120_000);
   });
 }
